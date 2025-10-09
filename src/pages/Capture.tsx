@@ -426,6 +426,10 @@ export default function Capture() {
     }
   }, [prompt, selectedTexture, textureWeight, creativity, quality]);
 
+  const src = useMemo(() => {
+    return getSrc(playbackId);
+  }, [playbackId]);
+
   if (!cameraType) {
     // Show loading state while auto-starting on desktop
     if (loading) {
@@ -504,10 +508,6 @@ export default function Capture() {
       </div>
     );
   }
-
-  const src = useMemo(() => {
-    return getSrc(playbackId);
-  }, [playbackId]);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-200 p-4">
