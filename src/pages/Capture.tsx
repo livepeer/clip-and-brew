@@ -13,7 +13,6 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import * as Player from '@livepeer/react/player';
-import { getSrc } from '@livepeer/react/external';
 import { createDaydreamStream, startWhipPublish, updateDaydreamPrompts } from '@/lib/daydream';
 import type { StreamDiffusionParams } from '@/lib/daydream';
 import { VideoRecorder, uploadToLivepeer, saveClipToDatabase } from '@/lib/recording';
@@ -518,7 +517,7 @@ export default function Capture() {
           {playbackId ? (
             <div ref={playerContainerRef} className="w-full h-full">
               <Player.Root
-                src={getSrc(playbackId)}
+                playbackId={playbackId}
                 autoPlay
                 muted
                 lowLatency="force"
