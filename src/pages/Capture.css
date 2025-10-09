@@ -1,0 +1,29 @@
+/* Force all Livepeer Player components to fill the container */
+[data-livepeer] {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+[data-livepeer-container] {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+}
+
+[data-livepeer-video] {
+  width: 100% !important;
+  height: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+
+[data-livepeer-video] video {
+  object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+

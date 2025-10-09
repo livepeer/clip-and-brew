@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -7,6 +7,7 @@ import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
+import './Capture.css';
 import {
   Popover,
   PopoverTrigger,
@@ -117,6 +118,24 @@ export default function Capture() {
   //   checkAuth();
   // }, []);
 
+  const checkAuth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      navigate('/login');
+    }
+  };
+
+  const selectCamera = useCallback(async (type: 'front' | 'back') => {
+    setCameraType(type);
+    const randomPrompt = type === 'front'
+      ? FRONT_PROMPTS[Math.floor(Math.random() * FRONT_PROMPTS.length)]
+      : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
+    setPrompt(randomPrompt);
+
+    await initializeStream(type);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Auto-start camera on desktop (non-mobile devices)
   useEffect(() => {
     if (!autoStartChecked && cameraType === null && !loading) {
@@ -129,24 +148,7 @@ export default function Capture() {
         setAutoStartChecked(true);
       }
     }
-  }, [autoStartChecked, cameraType, loading]);
-
-  const checkAuth = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      navigate('/login');
-    }
-  };
-
-  const selectCamera = async (type: 'front' | 'back') => {
-    setCameraType(type);
-    const randomPrompt = type === 'front'
-      ? FRONT_PROMPTS[Math.floor(Math.random() * FRONT_PROMPTS.length)]
-      : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
-    setPrompt(randomPrompt);
-
-    await initializeStream(type);
-  };
+  }, [autoStartChecked, cameraType, loading, selectCamera]);
 
   const initializeStream = async (type: 'front' | 'back') => {
     setLoading(true);
@@ -154,7 +156,11 @@ export default function Capture() {
       // Create Daydream stream using the helper
       const streamData = await createDaydreamStream();
 
-      console.log('Stream created:', streamData);
+      console.log('=== Full Daydream Stream Data ===');
+      console.log('Stream created:', JSON.stringify(streamData, null, 2));
+      console.log('output_playback_id:', streamData.output_playback_id);
+      console.log('output_playback_id type:', typeof streamData.output_playback_id);
+      console.log('================================');
       setStreamId(streamData.id);
       setPlaybackId(streamData.output_playback_id);
       setWhipUrl(streamData.whip_url);
@@ -224,7 +230,7 @@ export default function Capture() {
     }
   };
 
-  const updatePrompt = async () => {
+  const updatePrompt = useCallback(async () => {
     if (!streamId) return;
 
     try {
@@ -289,7 +295,7 @@ export default function Capture() {
     } catch (error: unknown) {
       console.error('Error updating prompt:', error);
     }
-  };
+  }, [streamId, prompt, creativity, quality, selectedTexture, textureWeight]);
 
   const calculateTIndexList = (creativityVal: number, qualityVal: number): number[] => {
     let baseIndices: number[];
@@ -424,11 +430,55 @@ export default function Capture() {
       }, 500);
       return () => clearTimeout(debounce);
     }
-  }, [prompt, selectedTexture, textureWeight, creativity, quality]);
+  }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId, updatePrompt]);
 
   const src = useMemo(() => {
-    return getSrc(playbackId);
+    console.log('=== Computing src ===');
+    console.log('playbackId:', playbackId);
+
+    if (!playbackId) {
+      console.log('playbackId is null/undefined - returning null');
+      return null;
+    }
+
+    // Try getSrc first (works for standard Livepeer playback IDs)
+    const result = getSrc(playbackId);
+    console.log('getSrc result:', result);
+
+    if (result && Array.isArray(result) && result.length > 0) {
+      console.log('Using getSrc result with', result.length, 'sources');
+      return result;
+    }
+
+    // For Daydream streams, construct WebRTC source manually
+    // Daydream uses Livepeer infrastructure but may have different endpoints
+    console.log('getSrc failed, constructing WebRTC source manually for Daydream playback ID');
+
+    // Try multiple source formats for maximum compatibility
+    // Use lvpr.tv domain which is the standard Livepeer gateway
+    const manualSrc = [
+      {
+        src: `https://livepeer.studio/webrtc/${playbackId}`,
+        width: 512,
+        height: 512,
+        mime: 'video/h264' as const,
+        type: 'webrtc' as const,
+      },
+      {
+        src: `https://livepeer.studio/hls/${playbackId}/index.m3u8`,
+        width: 512,
+        height: 512,
+        mime: 'application/vnd.apple.mpegurl' as const,
+        type: 'hls' as const,
+      },
+    ] as const;
+
+    console.log('Manual src constructed:', manualSrc);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return manualSrc as any;
   }, [playbackId]);
+  console.log("playbackId", playbackId);
+  console.log("src", src);
 
   if (!cameraType) {
     // Show loading state while auto-starting on desktop
@@ -519,21 +569,40 @@ export default function Capture() {
           Back
         </Button>
         <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
-          {playbackId ? (
-            <div ref={playerContainerRef} className="w-full h-full">
+          {playbackId && src ? (
+            <div
+              ref={playerContainerRef}
+              className="w-full h-full"
+              style={{ width: '100%', height: '100%', position: 'relative' }}
+            >
               <Player.Root
                 src={src}
                 autoPlay
                 lowLatency="force"
+                style={{ width: '100%', height: '100%' }}
               >
-                <Player.Container>
-                  <Player.Video className="w-full h-full object-cover" />
+                <Player.Container
+                  className="w-full h-full"
+                  style={{ width: '100%', height: '100%', position: 'relative' }}
+                >
+                  <Player.Video
+                    className="w-full h-full"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0
+                    }}
+                  />
                 </Player.Container>
               </Player.Root>
             </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center">
               <Loader2 className="w-12 h-12 animate-spin text-neutral-400" />
+              {playbackId && !src && <p className="text-xs text-neutral-500 mt-2">Loading stream...</p>}
             </div>
           )}
 
