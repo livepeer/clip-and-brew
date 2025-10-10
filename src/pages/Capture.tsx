@@ -181,11 +181,6 @@ export default function Capture() {
           });
         }
       }
-
-      toast({
-        title: 'Stream ready!',
-        description: 'You can now start recording',
-      });
     } catch (error: unknown) {
       console.error('Error initializing stream:', error);
       toast({
@@ -549,7 +544,7 @@ export default function Capture() {
           {playbackId && src ? (
             <div
               ref={playerContainerRef}
-              className="player-container w-full h-full"
+              className="player-container w-full h-full [&_[data-radix-aspect-ratio-wrapper]]:!h-full [&_[data-radix-aspect-ratio-wrapper]]:!pb-0"
               style={{ width: '100%', height: '100%', position: 'relative' }}
             >
               <Player.Root

@@ -40,3 +40,8 @@
 .read-the-docs {
   color: #888;
 }
+
+.player-container > [data-radix-aspect-ratio-wrapper] {
+  height: 100% !important;
+  padding-bottom: 0 !important;
+}
