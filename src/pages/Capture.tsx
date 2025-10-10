@@ -7,7 +7,6 @@ import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
-import './Capture.css';
 import {
   Popover,
   PopoverTrigger,
@@ -423,15 +422,6 @@ export default function Capture() {
     }
   };
 
-  useEffect(() => {
-    if (prompt && streamId) {
-      const debounce = setTimeout(() => {
-        updatePrompt();
-      }, 500);
-      return () => clearTimeout(debounce);
-    }
-  }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId, updatePrompt]);
-
   const src = useMemo(() => {
     console.log('=== Computing src ===');
     console.log('playbackId:', playbackId);
@@ -455,19 +445,15 @@ export default function Capture() {
     console.log('getSrc failed, constructing WebRTC source manually for Daydream playback ID');
 
     // Try multiple source formats for maximum compatibility
-    // Use lvpr.tv domain which is the standard Livepeer gateway
+    // Don't specify width/height - let the player detect from stream
     const manualSrc = [
       {
         src: `https://livepeer.studio/webrtc/${playbackId}`,
-        width: 512,
-        height: 512,
         mime: 'video/h264' as const,
         type: 'webrtc' as const,
       },
       {
         src: `https://livepeer.studio/hls/${playbackId}/index.m3u8`,
-        width: 512,
-        height: 512,
         mime: 'application/vnd.apple.mpegurl' as const,
         type: 'hls' as const,
       },
@@ -479,6 +465,44 @@ export default function Capture() {
   }, [playbackId]);
   console.log("playbackId", playbackId);
   console.log("src", src);
+
+  useEffect(() => {
+    if (prompt && streamId) {
+      const debounce = setTimeout(() => {
+        updatePrompt();
+      }, 500);
+      return () => clearTimeout(debounce);
+    }
+  }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId, updatePrompt]);
+
+  // Debug: Log actual video dimensions when loaded
+  useEffect(() => {
+    if (playerContainerRef.current) {
+      const checkVideoDimensions = () => {
+        const video = playerContainerRef.current?.querySelector('video');
+        if (video) {
+          console.log('=== Video Element Dimensions ===');
+          console.log('videoWidth:', video.videoWidth);
+          console.log('videoHeight:', video.videoHeight);
+          console.log('clientWidth:', video.clientWidth);
+          console.log('clientHeight:', video.clientHeight);
+          console.log('aspect ratio:', video.videoWidth / video.videoHeight);
+          console.log('================================');
+        }
+      };
+
+      // Check on loadedmetadata event
+      const video = playerContainerRef.current?.querySelector('video');
+      if (video) {
+        video.addEventListener('loadedmetadata', checkVideoDimensions);
+        // Also check immediately in case it's already loaded
+        if (video.videoWidth > 0) {
+          checkVideoDimensions();
+        }
+        return () => video.removeEventListener('loadedmetadata', checkVideoDimensions);
+      }
+    }
+  }, [playbackId, src]);
 
   if (!cameraType) {
     // Show loading state while auto-starting on desktop
@@ -572,14 +596,13 @@ export default function Capture() {
           {playbackId && src ? (
             <div
               ref={playerContainerRef}
-              className="w-full h-full"
+              className="player-container w-full h-full"
               style={{ width: '100%', height: '100%', position: 'relative' }}
             >
               <Player.Root
                 src={src}
                 autoPlay
                 lowLatency="force"
-                style={{ width: '100%', height: '100%' }}
               >
                 <Player.Container
                   className="w-full h-full"
@@ -590,12 +613,14 @@ export default function Capture() {
                     style={{
                       width: '100%',
                       height: '100%',
-                      objectFit: 'cover',
-                      position: 'absolute',
-                      top: 0,
-                      left: 0
+                      objectFit: 'cover'
                     }}
                   />
+                  <Player.LoadingIndicator>
+                    <div className="absolute inset-0 flex items-center justify-center bg-neutral-950/50">
+                      <Loader2 className="w-12 h-12 animate-spin text-primary" />
+                    </div>
+                  </Player.LoadingIndicator>
                 </Player.Container>
               </Player.Root>
             </div>
