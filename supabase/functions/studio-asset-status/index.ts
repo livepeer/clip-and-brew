@@ -53,6 +53,11 @@ serve(async (req) => {
       assetId: data.id,
     };
 
+    // Include progress information if available
+    if (data.status?.progress !== undefined) {
+      result.progress = data.status.progress;
+    }
+
     // Include error information if the asset failed
     if (data.status?.errorMessage || data.errors) {
       result.error = {

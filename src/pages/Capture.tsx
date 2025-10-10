@@ -128,6 +128,7 @@ export default function Capture() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showSlowLoadingMessage, setShowSlowLoadingMessage] = useState(false);
   const [uploadingClip, setUploadingClip] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const sourceVideoRef = useRef<HTMLVideoElement>(null);
@@ -494,9 +495,15 @@ export default function Capture() {
         description: 'Uploading your clip to Livepeer Studio',
       });
 
-      // Upload to Livepeer Studio
+      // Upload to Livepeer Studio with progress tracking
       const filename = `daydream-clip-${Date.now()}.webm`;
-      const { assetId, playbackId: assetPlaybackId, downloadUrl } = await uploadToLivepeer(blob, filename);
+      const { assetId, playbackId: assetPlaybackId, downloadUrl } = await uploadToLivepeer(
+        blob, 
+        filename,
+        (progress) => {
+          setUploadProgress(progress.step || progress.phase);
+        }
+      );
 
       console.log('Upload complete, saving to database...');
 
@@ -539,6 +546,7 @@ export default function Capture() {
       });
     } finally {
       setUploadingClip(false);
+      setUploadProgress('');
     }
   };
 
@@ -819,7 +827,7 @@ export default function Capture() {
           ) : uploadingClip ? (
             <span className="flex items-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
-              Uploading clip...
+              {uploadProgress || 'Uploading clip...'}
             </span>
           ) : loading || !isPlaying ? (
             <span className="flex items-center gap-2">

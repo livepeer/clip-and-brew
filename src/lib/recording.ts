@@ -16,6 +16,12 @@ interface UploadResult {
   downloadUrl?: string;
 }
 
+interface UploadProgress {
+  phase: string;
+  step?: string;
+  progress?: number;
+}
+
 /**
  * Start recording from a video element using MediaRecorder
  */
@@ -144,7 +150,8 @@ export class VideoRecorder {
  */
 export async function uploadToLivepeer(
   blob: Blob,
-  filename: string
+  filename: string,
+  onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadResult> {
   // Step 1: Request upload URL from server
   console.log('Requesting upload URL...');
@@ -174,6 +181,8 @@ export async function uploadToLivepeer(
     filename 
   });
   
+  onProgress?.({ phase: 'uploading', step: 'Uploading video...' });
+  
   const putResponse = await fetch(uploadData.uploadUrl, {
     method: 'PUT',
     headers: {
@@ -189,15 +198,17 @@ export async function uploadToLivepeer(
   }
 
   console.log('Upload successful, waiting for asset to be ready...');
+  onProgress?.({ phase: 'processing', step: 'Processing video...' });
 
   // Step 3: Poll for asset readiness with better error handling
   let attempts = 0;
-  const maxAttempts = 120; // 2 minutes max (polling every 1s)
+  const maxAttempts = 300; // 5 minutes max (polling every 1s)
   let assetData: { 
     status?: string; 
     playbackId?: string; 
     downloadUrl?: string;
     error?: { message?: string };
+    progress?: number;
   } | null = null;
 
   while (attempts < maxAttempts) {
@@ -212,7 +223,15 @@ export async function uploadToLivepeer(
 
     assetData = data as typeof assetData;
     const status = assetData?.status;
+    const progress = assetData?.progress || (attempts / maxAttempts) * 100;
     console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, status, assetData);
+    
+    // Report progress to caller
+    onProgress?.({
+      phase: 'processing',
+      step: `Processing: ${status || 'waiting'}...`,
+      progress: Math.min(progress, 99), // Cap at 99% until ready
+    });
 
     if (status === 'ready') {
       console.log('Asset is ready!', assetData);
@@ -231,13 +250,15 @@ export async function uploadToLivepeer(
 
   if (assetData?.status !== 'ready') {
     console.error('Asset processing timeout. Last status:', assetData);
-    throw new Error('Video processing timed out after 2 minutes. Please try recording again.');
+    throw new Error('Video processing timed out after 5 minutes. Please try recording again.');
   }
 
   if (!assetData?.playbackId) {
     console.error('Asset ready but no playbackId:', assetData);
     throw new Error('Video processed but playback ID is missing');
   }
+
+  onProgress?.({ phase: 'complete', step: 'Complete!', progress: 100 });
 
   return {
     assetId: uploadData.assetId,
