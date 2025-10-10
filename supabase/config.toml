@@ -12,6 +12,15 @@ verify_jwt = false
 [functions.generate-ticket]
 verify_jwt = false
 
+[functions.studio-request-upload]
+verify_jwt = false
+
+[functions.studio-asset-status]
+verify_jwt = false
+
+[functions.save-clip]
+verify_jwt = false
+
 [functions.send-auth-email]
 verify_jwt = false
 
