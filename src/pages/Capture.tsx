@@ -205,30 +205,36 @@ export default function Capture() {
     const video = document.createElement('video');
     video.srcObject = originalStream;
     video.autoplay = true;
+    video.playsInline = true;
     video.muted = true;
-    video.style.display = 'none';
+    video.style.position = 'fixed';
+    video.style.top = '-9999px';
     document.body.appendChild(video);
+
+    // Explicitly play the video
+    video.play().catch(err => console.error('Error playing video for mirroring:', err));
 
     // Create a canvas to mirror the video
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d', { alpha: false })!;
 
-    // Start mirroring on each frame
+    // Start continuous mirroring loop
     const mirror = () => {
       if (video.readyState >= video.HAVE_CURRENT_DATA) {
-        ctx.save();
-        ctx.scale(-1, 1); // Mirror horizontally
-        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-        ctx.restore();
+        // Clear and redraw with horizontal flip
+        ctx.setTransform(-1, 0, 0, 1, canvas.width, 0); // Flip horizontally
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
       requestAnimationFrame(mirror);
     };
-    video.addEventListener('loadeddata', () => mirror());
 
-    // Capture the mirrored stream from canvas
-    const mirroredVideoStream = canvas.captureStream(24); // 24 fps
+    // Start drawing immediately
+    mirror();
+
+    // Capture the mirrored stream from canvas (24 fps to match typical camera)
+    const mirroredVideoStream = canvas.captureStream(24);
 
     // Add the original audio tracks to the mirrored stream
     originalStream.getAudioTracks().forEach(track => {
@@ -744,9 +750,7 @@ export default function Capture() {
               <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
               Recording... ({(recordingTime / 1000).toFixed(1)}s)
             </span>
-          ) : loading ? (
-            <Loader2 className="w-6 h-6 animate-spin" />
-          ) : !isPlaying ? (
+          ) : loading || !isPlaying ? (
             <span className="flex items-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
               Starting stream...
