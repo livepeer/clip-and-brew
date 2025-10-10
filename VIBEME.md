@@ -55,6 +55,7 @@ supabase/
 │   ├── studio-asset-status/   # Poll Livepeer asset status
 │   ├── save-clip/             # Save clip metadata to DB
 │   ├── generate-ticket/       # Generate coffee QR code
+│   ├── redeem-ticket/         # Mark ticket as redeemed
 │   └── send-auth-email/       # Custom OTP email template
 └── migrations/     # Database schema
 ```
@@ -158,7 +159,13 @@ These are **non-negotiable** technical requirements:
 8. **Share & Reward** (ClipView.tsx):
    - Share to X/Twitter with preset text
    - Generate unique coffee ticket code
-   - Display ticket as large text + QR data
+   - Interactive ticket redemption:
+     - First-time instructions modal (localStorage tracked)
+     - 5-second lock to prevent accidental redemption
+     - Swipe-down gesture to redeem (bartender validates)
+     - Visual feedback: opacity/scale animations, bouncing indicator
+     - Redeemed state: Shows "Already Redeemed" with "Create New Clip" CTA
+     - Loads redemption status on page load
 
 ### Authentication Flow
 
@@ -269,6 +276,21 @@ All functions have `verify_jwt: false` (public access)
 - **Auto-apply**: Changes trigger immediate stream update
 - **Texture overlay**: Optional, 8 presets, weight slider (0-1)
 - **Creativity/Quality**: Abstract sliders that map to diffusion parameters
+
+### Ticket Redemption (ClipView.tsx)
+- **Interactive validation**: Bartender swipes down on user's phone to redeem
+- **UX Flow**:
+  - First-time modal explains process (localStorage: `brewdream_ticket_instructions_seen`)
+  - Always-visible instruction: "Show this ticket to the bartender"
+  - 5-second lock on initial display (prevents accidental swipes)
+  - Swipeable card with drag threshold (100px)
+  - Visual feedback: Opacity/scale transforms, bouncing indicator
+  - Redemption: Animates away, calls edge function, shows success toast
+- **States**:
+  - **Active**: Ticket code displayed with gradient text, swipe enabled after lock
+  - **Locked**: First 5 seconds, shows spinner, swipe disabled
+  - **Redeemed**: Checkmark icon, grayed out, "Create New Clip" button
+- **Tech**: Framer Motion drag API, useMotionValue/useTransform for animations
 
 ## 🎨 Styling Philosophy
 
@@ -420,10 +442,18 @@ t_index = base_index * scale (clamped 0-50, rounded)
 - Database: CHECK constraint (3000-10000 ms)
 - Backend: Clamping in `stopRecording()`
 
-### Ticket Generation
-- Format: Random base36 string (8 chars, uppercase)
-- QR Data: `DD-COFFEE-{code}`
-- One ticket per session (users table relation)
+### Ticket Generation & Redemption
+- **Format**: Random base36 string (8 chars, uppercase)
+- **QR Data**: `DD-COFFEE-{code}`
+- **Generation**: One ticket per session (linked to session_id)
+- **Redemption Flow**:
+  1. User generates ticket → confetti + first-time instructions modal (if needed)
+  2. 5-second lock activates (shows "Please wait..." indicator)
+  3. Lock expires → "Swipe down to redeem" with animated indicator
+  4. Bartender swipes down 100px+ on user's phone
+  5. Calls `redeem-ticket` edge function → updates `redeemed` field
+  6. Shows "Already Redeemed" state with CTA to create new clip
+- **Safety**: 5-second lock prevents accidental swipes; bartender validates visually
 
 ## 🔄 State Flow Examples
 
@@ -714,7 +744,10 @@ Avoid:
 
 ---
 
-**Last Updated**: 2025-10-10 (Canvas-based mirroring at source for natural selfie mode)
+**Last Updated**: 2025-10-10
+- Canvas-based mirroring at source for natural selfie mode
+- Interactive ticket redemption with swipe-to-validate UX
+- Fixed auto-start camera delay and edge function config issues
 **Project Status**: Active development for Livepeer × Daydream Summit (Brewdream)
 **Maintainer Note**: Keep this file concise but comprehensive. Every section should answer "what do I need to know to work on this?" Always check PRD for feature requirements before implementing.
 
