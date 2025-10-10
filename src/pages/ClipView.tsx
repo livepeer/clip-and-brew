@@ -1,11 +1,20 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, useMotionValue, useTransform, PanInfo } from 'framer-motion';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, Eye, Heart, Share2, Download, Twitter, Home, Coffee, Loader2 } from 'lucide-react';
+import { ArrowLeft, Eye, Heart, Share2, Download, Twitter, Home, Coffee, Loader2, AlertCircle, CheckCircle2, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Header } from '@/components/Header';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import confetti from 'canvas-confetti';
 
 interface Clip {
@@ -17,17 +26,30 @@ interface Clip {
   session_id: string;
 }
 
+interface Ticket {
+  id: string;
+  code: string;
+  redeemed: boolean;
+}
+
 export default function ClipView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [clip, setClip] = useState<Clip | null>(null);
   const [loading, setLoading] = useState(true);
   const [ticketCode, setTicketCode] = useState<string | null>(null);
+  const [isRedeemed, setIsRedeemed] = useState(false);
   const [generatingTicket, setGeneratingTicket] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isSwipeLocked, setIsSwipeLocked] = useState(true);
+  const [showInstructionsModal, setShowInstructionsModal] = useState(false);
+  const [isRedeeming, setIsRedeeming] = useState(false);
   const { toast } = useToast();
   const coffeeCardRef = useRef<HTMLDivElement | null>(null);
+  const swipeY = useMotionValue(0);
+  const opacity = useTransform(swipeY, [0, 150], [1, 0]);
+  const scale = useTransform(swipeY, [0, 150], [1, 0.9]);
 
   useEffect(() => {
     loadClip();
@@ -66,12 +88,21 @@ export default function ClipView() {
         if (sessionData) {
           const { data: ticketData } = await supabase
             .from('tickets')
-            .select('code')
+            .select('code, redeemed')
             .eq('session_id', sessionData.id)
             .single();
 
           if (ticketData) {
             setTicketCode(ticketData.code);
+            setIsRedeemed(ticketData.redeemed);
+
+            // Start 5-second lock timer only if ticket exists and not redeemed
+            if (!ticketData.redeemed) {
+              setIsSwipeLocked(true);
+              setTimeout(() => {
+                setIsSwipeLocked(false);
+              }, 5000);
+            }
           }
         }
       }
@@ -111,10 +142,25 @@ export default function ClipView() {
       if (error) throw error;
 
       setTicketCode(data.code);
+      setIsRedeemed(false);
+
       toast({
         title: 'Coffee ticket generated!',
-        description: 'Show this QR code at the coffee stand',
+        description: 'Show this ticket to the bartender',
       });
+
+      // Check if user has seen instructions before
+      const hasSeenInstructions = localStorage.getItem('brewdream_ticket_instructions_seen');
+      if (!hasSeenInstructions) {
+        setShowInstructionsModal(true);
+        localStorage.setItem('brewdream_ticket_instructions_seen', 'true');
+      }
+
+      // Start 5-second lock timer
+      setIsSwipeLocked(true);
+      setTimeout(() => {
+        setIsSwipeLocked(false);
+      }, 5000);
 
       // 🎉 Trigger confetti from card position
       if (coffeeCardRef.current) {
@@ -156,6 +202,61 @@ export default function ClipView() {
       });
     } finally {
       setGeneratingTicket(false);
+    }
+  };
+
+  const handleDragEnd = async (_event: any, info: PanInfo) => {
+    const dragThreshold = 100; // pixels
+
+    if (isSwipeLocked || isRedeemed || isRedeeming) {
+      swipeY.set(0);
+      return;
+    }
+
+    if (info.offset.y > dragThreshold) {
+      // Swipe successful - redeem ticket
+      await redeemTicket();
+    } else {
+      // Snap back
+      swipeY.set(0);
+    }
+  };
+
+  const redeemTicket = async () => {
+    if (!ticketCode || isRedeeming) return;
+
+    setIsRedeeming(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('redeem-ticket', {
+        body: { code: ticketCode },
+      });
+
+      if (error) throw error;
+
+      // Animate ticket away
+      swipeY.set(200);
+
+      setTimeout(() => {
+        setIsRedeemed(true);
+        swipeY.set(0);
+
+        toast({
+          title: 'Ticket redeemed!',
+          description: 'Enjoy your coffee! ☕',
+        });
+      }, 500);
+
+    } catch (error: any) {
+      console.error('Error redeeming ticket:', error);
+      swipeY.set(0);
+
+      toast({
+        title: 'Error',
+        description: error.error || error.message || 'Failed to redeem ticket',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRedeeming(false);
     }
   };
 
@@ -217,15 +318,15 @@ export default function ClipView() {
               </div>
             </motion.div>
 
-       
 
-         
+
+
           </div>
 
           {/* Sidebar */}
           <div className="space-y-6">
 
-       
+
 
                  {/* Title and Description */}
             <motion.div
@@ -267,47 +368,150 @@ export default function ClipView() {
             </motion.div>
             {/* Coffee Ticket Section */}
             <motion.div
-              ref={coffeeCardRef}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4, duration: 0.4 }}
-              className="bg-card rounded-2xl p-6 border border-border relative overflow-hidden"
             >
-              {ticketCode ? (
-                <div className="text-center">
-                  <Coffee className="w-12 h-12 mx-auto mb-4 text-primary" />
-                  <h3 className="text-lg font-bold mb-2">Your Coffee Ticket</h3>
-                  <div className="text-4xl font-mono font-bold tracking-wider bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 bg-clip-text text-transparent mb-2">
-                    {ticketCode}
+              {ticketCode && !isRedeemed ? (
+                <>
+                  {/* Always-visible instructions */}
+                  <div className="mb-3 text-center">
+                    <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
+                      <AlertCircle className="w-4 h-4" />
+                      Show this ticket to the bartender to claim your coffee
+                    </p>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Show this code at the coffee stand
-                  </p>
+
+                  {/* Swipeable Ticket Card */}
+                  <motion.div
+                    ref={coffeeCardRef}
+                    drag="y"
+                    dragConstraints={{ top: 0, bottom: 0 }}
+                    dragElastic={0.2}
+                    onDragEnd={handleDragEnd}
+                    style={{ y: swipeY, opacity, scale }}
+                    className="bg-card rounded-2xl p-6 border border-border relative overflow-hidden cursor-grab active:cursor-grabbing"
+                  >
+                    {/* Lock indicator */}
+                    {isSwipeLocked && (
+                      <div className="absolute top-2 right-2 text-xs text-muted-foreground flex items-center gap-1 bg-background/80 px-2 py-1 rounded-full">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Please wait...
+                      </div>
+                    )}
+
+                    <div className="text-center">
+                      <Coffee className="w-12 h-12 mx-auto mb-4 text-primary" />
+                      <h3 className="text-lg font-bold mb-2">Your Coffee Ticket</h3>
+                      <div className="text-4xl font-mono font-bold tracking-wider bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 bg-clip-text text-transparent mb-2">
+                        {ticketCode}
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-3">
+                        {isSwipeLocked ? 'Getting ready...' : 'Swipe down to redeem'}
+                      </p>
+
+                      {/* Visual indicator for swipe */}
+                      {!isSwipeLocked && (
+                        <div className="flex justify-center animate-bounce">
+                          <div className="w-8 h-1 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Coffee cup icon below for visual feedback */}
+                    <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 opacity-20">
+                      <Coffee className="w-16 h-16 text-primary" />
+                    </div>
+                  </motion.div>
+                </>
+              ) : isRedeemed ? (
+                /* Redeemed State */
+                <div
+                  ref={coffeeCardRef}
+                  className="bg-card rounded-2xl p-6 border border-border relative overflow-hidden"
+                >
+                  <div className="text-center">
+                    <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-500/20 flex items-center justify-center">
+                      <CheckCircle2 className="w-8 h-8 text-green-500" />
+                    </div>
+                    <h3 className="text-lg font-bold mb-2 text-muted-foreground">Ticket Already Redeemed</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Want more coffee? Create another clip!
+                    </p>
+                    <Button
+                      onClick={() => navigate('/capture')}
+                      className="w-full gap-2"
+                    >
+                      <Video className="w-5 h-5" />
+                      Create New Clip
+                    </Button>
+                  </div>
                 </div>
               ) : (
-                <div className="text-center">
-                  <Coffee className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                  <h3 className="text-lg font-bold mb-4">Get Your Free Coffee</h3>
-                  <Button
-                    onClick={generateTicket}
-                    disabled={generatingTicket}
-                    className="w-full gap-2 bg-neutral-100 text-neutral-900 hover:bg-neutral-200"
-                  >
-                    {generatingTicket ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <Coffee className="w-5 h-5" />
-                    )}
-                    Generate Ticket
-                  </Button>
+                /* Generate Ticket Button */
+                <div
+                  ref={coffeeCardRef}
+                  className="bg-card rounded-2xl p-6 border border-border relative overflow-hidden"
+                >
+                  <div className="text-center">
+                    <Coffee className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                    <h3 className="text-lg font-bold mb-4">Get Your Free Coffee</h3>
+                    <Button
+                      onClick={generateTicket}
+                      disabled={generatingTicket}
+                      className="w-full gap-2 bg-neutral-100 text-neutral-900 hover:bg-neutral-200"
+                    >
+                      {generatingTicket ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Coffee className="w-5 h-5" />
+                      )}
+                      Generate Ticket
+                    </Button>
+                  </div>
                 </div>
               )}
             </motion.div>
 
-         
+
           </div>
         </div>
       </div>
+
+      {/* First-time Instructions Modal */}
+      <AlertDialog open={showInstructionsModal} onOpenChange={setShowInstructionsModal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Coffee className="w-6 h-6 text-primary" />
+              How to Claim Your Coffee
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-left">
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-sm font-bold text-primary">1</span>
+                </div>
+                <p>Show this ticket to the bartender</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-sm font-bold text-primary">2</span>
+                </div>
+                <p>The bartender will swipe down on your phone to validate your ticket</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-sm font-bold text-primary">3</span>
+                </div>
+                <p>Enjoy your free coffee! ☕</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction>Got it!</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

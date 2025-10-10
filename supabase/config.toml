@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.send-auth-email]
 verify_jwt = false
+
+[functions.redeem-ticket]
+verify_jwt = false
