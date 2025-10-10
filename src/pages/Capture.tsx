@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -85,14 +85,46 @@ const hasMultipleCameras = (): boolean => {
   return hasTouch || mobileUserAgent;
 };
 
+/**
+ * Create a dummy black canvas stream for pre-loading
+ * This allows us to start WHIP negotiation before camera access
+ */
+const createDummyStream = (): MediaStream => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d', { alpha: false })!;
+  
+  // Fill with black
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Capture stream from canvas
+  const stream = canvas.captureStream(24);
+  
+  // Add silent audio track (some WebRTC implementations require audio)
+  const audioContext = new AudioContext();
+  const oscillator = audioContext.createOscillator();
+  const dst = audioContext.createMediaStreamDestination();
+  oscillator.connect(dst);
+  oscillator.start();
+  oscillator.frequency.value = 0; // Silent
+  
+  stream.addTrack(dst.stream.getAudioTracks()[0]);
+  
+  return stream;
+};
+
 export default function Capture() {
-  const [cameraType, setCameraType] = useState<'front' | 'back' | null>(null);
+  const [cameraType, setCameraType] = useState<'front' | 'back'>('front');
+  const [streamStarted, setStreamStarted] = useState(false); // NEW: Track if user clicked "Start Stream"
   const [loading, setLoading] = useState(false);
   const [streamId, setStreamId] = useState<string | null>(null);
   const [playbackId, setPlaybackId] = useState<string | null>(null);
   const [whipUrl, setWhipUrl] = useState<string | null>(null);
-  const [autoStartChecked, setAutoStartChecked] = useState(false);
+  const [backgroundStreamInitialized, setBackgroundStreamInitialized] = useState(false);
 
+  const [defaultPrompt, setDefaultPrompt] = useState(''); // NEW: Store the random default prompt
   const [prompt, setPrompt] = useState('');
   const [selectedTexture, setSelectedTexture] = useState<string | null>(null);
   const [textureWeight, setTextureWeight] = useState([0.5]);
@@ -111,39 +143,61 @@ export default function Capture() {
   const recorderRef = useRef<VideoRecorder | null>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dummyStreamRef = useRef<MediaStream | null>(null);
 
   const navigate = useNavigate();
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
-  // useEffect(() => {
-  //   checkAuth();
-  // }, []);
+  // Auto-detect camera type on mount
+  useEffect(() => {
+    const isMultipleCameras = hasMultipleCameras();
+    setCameraType(isMultipleCameras ? 'front' : 'front'); // Default to front
+    
+    // Pick a random default prompt based on camera type
+    const prompts = isMultipleCameras ? FRONT_PROMPTS : FRONT_PROMPTS;
+    const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
+    setDefaultPrompt(randomPrompt);
+  }, []);
 
-  const checkAuth = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      navigate('/login');
+  // Initialize stream in background on mount
+  useEffect(() => {
+    if (!backgroundStreamInitialized && defaultPrompt) {
+      initializeBackgroundStream();
     }
-  };
+  }, [defaultPrompt, backgroundStreamInitialized]);
 
-  const initializeStream = useCallback(async (type: 'front' | 'back') => {
+  const initializeBackgroundStream = async () => {
+    if (backgroundStreamInitialized) return;
+    
+    setBackgroundStreamInitialized(true);
     setLoading(true);
+    
     try {
+      console.log('🚀 Starting background stream initialization...');
+      
       // Create Daydream stream
       const streamData = await createDaydreamStream();
-
+      
       setStreamId(streamData.id);
       setPlaybackId(streamData.output_playback_id);
       setWhipUrl(streamData.whip_url);
-
-      // Start WebRTC publishing
-      await startWebRTCPublish(streamData.whip_url, type);
-
+      
+      console.log('✅ Daydream stream created:', streamData.id);
+      
+      // Start WHIP with dummy black canvas stream
+      const dummyStream = createDummyStream();
+      dummyStreamRef.current = dummyStream;
+      
+      const pc = await startWhipPublish(streamData.whip_url, dummyStream);
+      pcRef.current = pc;
+      
+      console.log('✅ WHIP publishing started with dummy stream');
+      
       // Save session to database
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // For anonymous users, look up by ID instead of email
         const query = user.is_anonymous
           ? supabase.from('users').select('id').eq('id', user.id)
           : supabase.from('users').select('id').eq('email', user.email);
@@ -155,54 +209,29 @@ export default function Capture() {
             user_id: userData.id,
             stream_id: streamData.id,
             playback_id: streamData.output_playback_id,
-            camera_type: type,
+            camera_type: cameraType,
           });
         }
       }
+      
+      console.log('✅ Background stream initialization complete!');
     } catch (error: unknown) {
-      console.error('Error initializing stream:', error);
+      console.error('Error initializing background stream:', error);
       toast({
         title: 'Error',
         description: error instanceof Error ? error.message : String(error),
         variant: 'destructive',
       });
+      setBackgroundStreamInitialized(false); // Allow retry
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // startWebRTCPublish is stable (doesn't depend on props/state)
-
-  const selectCamera = useCallback(async (type: 'front' | 'back') => {
-    setCameraType(type);
-    const randomPrompt = type === 'front'
-      ? FRONT_PROMPTS[Math.floor(Math.random() * FRONT_PROMPTS.length)]
-      : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
-    setPrompt(randomPrompt);
-
-    await initializeStream(type);
-  }, [initializeStream]);
-
-  // Auto-start camera on desktop (non-mobile devices)
-  useEffect(() => {
-    if (!autoStartChecked && cameraType === null && !loading) {
-      const shouldAutoStart = !hasMultipleCameras();
-      if (shouldAutoStart) {
-        setAutoStartChecked(true);
-        // Desktop device - auto-start with default camera
-        selectCamera('front');
-      } else {
-        setAutoStartChecked(true);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStartChecked, cameraType, loading]);
+  };
 
   /**
    * Mirror a video stream by rendering it through a canvas
-   * This ensures the mirrored stream goes to Daydream, so the output is naturally mirrored
    */
   const mirrorStream = (originalStream: MediaStream): MediaStream => {
-    // Create a hidden video element to play the original stream
     const video = document.createElement('video');
     video.srcObject = originalStream;
     video.autoplay = true;
@@ -212,32 +241,25 @@ export default function Capture() {
     video.style.top = '-9999px';
     document.body.appendChild(video);
 
-    // Explicitly play the video
     video.play().catch(err => console.error('Error playing video for mirroring:', err));
 
-    // Create a canvas to mirror the video
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
     const ctx = canvas.getContext('2d', { alpha: false })!;
 
-    // Start continuous mirroring loop
     const mirror = () => {
       if (video.readyState >= video.HAVE_CURRENT_DATA) {
-        // Clear and redraw with horizontal flip
-        ctx.setTransform(-1, 0, 0, 1, canvas.width, 0); // Flip horizontally
+        ctx.setTransform(-1, 0, 0, 1, canvas.width, 0);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
       requestAnimationFrame(mirror);
     };
 
-    // Start drawing immediately
     mirror();
 
-    // Capture the mirrored stream from canvas (24 fps to match typical camera)
     const mirroredVideoStream = canvas.captureStream(24);
 
-    // Add the original audio tracks to the mirrored stream
     originalStream.getAudioTracks().forEach(track => {
       mirroredVideoStream.addTrack(track);
     });
@@ -245,32 +267,95 @@ export default function Capture() {
     return mirroredVideoStream;
   };
 
-  const startWebRTCPublish = async (whipUrl: string, type: 'front' | 'back') => {
+  /**
+   * Replace the dummy stream with the actual camera feed
+   */
+  const replaceDummyStreamWithCamera = async () => {
+    if (!pcRef.current || !whipUrl) {
+      throw new Error('WebRTC connection not ready');
+    }
+
     try {
+      console.log('🎥 Requesting camera access...');
+      
+      // Get camera stream
       const originalStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: type === 'front' ? 'user' : 'environment',
+          facingMode: cameraType === 'front' ? 'user' : 'environment',
           width: 512,
           height: 512,
         },
         audio: true,
       });
 
-      // Mirror the stream if using front camera
-      const stream = type === 'front' ? mirrorStream(originalStream) : originalStream;
+      console.log('✅ Camera access granted');
 
+      // Mirror if front camera
+      const stream = cameraType === 'front' ? mirrorStream(originalStream) : originalStream;
+
+      // Show in PiP preview
       if (sourceVideoRef.current) {
         sourceVideoRef.current.srcObject = stream;
       }
 
-      // Use the WHIP helper from daydream.ts
-      const pc = await startWhipPublish(whipUrl, stream);
-      pcRef.current = pc;
+      // Replace tracks in the existing peer connection
+      const pc = pcRef.current;
+      const senders = pc.getSenders();
+      
+      // Replace video track
+      const videoTrack = stream.getVideoTracks()[0];
+      const videoSender = senders.find(s => s.track?.kind === 'video');
+      if (videoSender && videoTrack) {
+        await videoSender.replaceTrack(videoTrack);
+        console.log('✅ Video track replaced');
+      }
+      
+      // Replace audio track
+      const audioTrack = stream.getAudioTracks()[0];
+      const audioSender = senders.find(s => s.track?.kind === 'audio');
+      if (audioSender && audioTrack) {
+        await audioSender.replaceTrack(audioTrack);
+        console.log('✅ Audio track replaced');
+      }
 
-      console.log('WebRTC publishing started');
+      // Stop dummy stream
+      if (dummyStreamRef.current) {
+        dummyStreamRef.current.getTracks().forEach(track => track.stop());
+        dummyStreamRef.current = null;
+      }
+
+      console.log('✅ Stream replacement complete!');
     } catch (error) {
-      console.error('Error starting WebRTC publish:', error);
+      console.error('Error replacing stream with camera:', error);
       throw error;
+    }
+  };
+
+  /**
+   * Handle "Start Stream" button click
+   */
+  const handleStartStream = async () => {
+    setLoading(true);
+    try {
+      // Replace dummy stream with camera
+      await replaceDummyStreamWithCamera();
+      
+      // Mark stream as started
+      setStreamStarted(true);
+      
+      // If user hasn't customized the prompt, use the default
+      if (!prompt.trim()) {
+        setPrompt(defaultPrompt);
+      }
+    } catch (error: unknown) {
+      console.error('Error starting stream:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -278,25 +363,21 @@ export default function Capture() {
     if (!streamId) return;
 
     try {
-      // Calculate t_index_list based on creativity and quality
       const tIndexList = calculateTIndexList(creativity[0], quality[0]);
 
-      // Determine IP-Adapter settings when a texture is selected
       const selectedTextureObj = selectedTexture
         ? TEXTURES.find((t) => t.id === selectedTexture)
         : null;
 
-      // Build params for StreamDiffusion
       const params: StreamDiffusionParams = {
         model_id: 'stabilityai/sdxl-turbo',
-        prompt,
+        prompt: prompt || defaultPrompt, // Use default if empty
         negative_prompt: 'blurry, low quality, flat, 2d, distorted',
         t_index_list: tIndexList,
         seed: 42,
         num_inference_steps: 50,
       };
 
-      // Include IP-Adapter only if a texture is selected
       if (selectedTextureObj) {
         params.ip_adapter = {
           enabled: true,
@@ -307,7 +388,6 @@ export default function Capture() {
         };
         params.ip_adapter_style_image_url = selectedTextureObj.url;
 
-        // Use SDXL default controlnets but set conditioning_scale to 0 (disabled via scale)
         params.controlnets = [
           {
             enabled: true,
@@ -333,13 +413,12 @@ export default function Capture() {
         ];
       }
 
-      // Use the StreamDiffusion prompt helper with proper params
       await updateDaydreamPrompts(streamId, params);
 
     } catch (error: unknown) {
       console.error('Error updating prompt:', error);
     }
-  }, [streamId, prompt, creativity, quality, selectedTexture, textureWeight]);
+  }, [streamId, prompt, defaultPrompt, creativity, quality, selectedTexture, textureWeight]);
 
   const calculateTIndexList = (creativityVal: number, qualityVal: number): number[] => {
     let baseIndices: number[];
@@ -359,12 +438,10 @@ export default function Capture() {
   };
 
   const startRecording = async () => {
-    // Desktop mode: if already recording, ignore (stop will be called separately)
     if (!isMobile && recording) {
       return;
     }
 
-    // Get the video element from the Livepeer Player
     const playerVideo = playerContainerRef.current?.querySelector('video') as HTMLVideoElement;
 
     if (!playerVideo) {
@@ -376,7 +453,6 @@ export default function Capture() {
       return;
     }
 
-    // Check if captureStream is supported
     if (!VideoRecorder.isSupported(playerVideo)) {
       setCaptureSupported(false);
       toast({
@@ -395,7 +471,6 @@ export default function Capture() {
       setRecording(true);
       setRecordStartTime(Date.now());
 
-      // Auto-stop at 10 seconds
       autoStopTimerRef.current = setTimeout(() => {
         stopRecording();
       }, 10000);
@@ -422,7 +497,6 @@ export default function Capture() {
   const stopRecording = async () => {
     if (!recorderRef.current || !recordStartTime || !streamId) return;
 
-    // Clear auto-stop timer
     if (autoStopTimerRef.current) {
       clearTimeout(autoStopTimerRef.current);
       autoStopTimerRef.current = null;
@@ -430,11 +504,9 @@ export default function Capture() {
 
     const recordingDuration = Date.now() - recordStartTime;
 
-    // Check minimum duration (3 seconds)
     if (recordingDuration < 3000) {
       setRecording(false);
 
-      // Stop and discard the recording
       try {
         await recorderRef.current.stop();
       } catch (error) {
@@ -454,7 +526,6 @@ export default function Capture() {
     setLoading(true);
 
     try {
-      // Stop the recorder and get the blob
       const { blob, durationMs } = await recorderRef.current.stop();
       recorderRef.current = null;
 
@@ -465,13 +536,11 @@ export default function Capture() {
         description: 'Uploading your clip to Livepeer Studio',
       });
 
-      // Upload to Livepeer Studio
       const filename = `daydream-clip-${Date.now()}.webm`;
       const { assetId, playbackId: assetPlaybackId, downloadUrl } = await uploadToLivepeer(blob, filename);
 
       console.log('Upload complete, saving to database...');
 
-      // Get session ID
       const { data: sessionData } = await supabase
         .from('sessions')
         .select('id')
@@ -482,14 +551,13 @@ export default function Capture() {
         throw new Error('Session not found');
       }
 
-      // Save to database
       const clip = await saveClipToDatabase({
         assetId,
         playbackId: assetPlaybackId,
         downloadUrl,
         durationMs,
         sessionId: sessionData.id,
-        prompt,
+        prompt: prompt || defaultPrompt,
         textureId: selectedTexture,
         textureWeight: selectedTexture ? textureWeight[0] : null,
         tIndexList: calculateTIndexList(creativity[0], quality[0]),
@@ -518,15 +586,12 @@ export default function Capture() {
       return null;
     }
 
-    // Try getSrc first (works for standard Livepeer playback IDs)
     const result = getSrc(playbackId);
 
     if (result && Array.isArray(result) && result.length > 0) {
       return result;
     }
 
-    // For Daydream streams, construct WebRTC source manually
-    // Daydream uses Livepeer infrastructure but may have different endpoints
     const manualSrc = [
       {
         src: `https://livepeer.studio/webrtc/${playbackId}`,
@@ -545,20 +610,19 @@ export default function Capture() {
   }, [playbackId]);
 
   useEffect(() => {
-    if (prompt && streamId) {
+    if ((prompt || defaultPrompt) && streamId) {
       const debounce = setTimeout(() => {
         updatePrompt();
       }, 500);
       return () => clearTimeout(debounce);
     }
-  }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId, updatePrompt]);
+  }, [prompt, defaultPrompt, selectedTexture, textureWeight, creativity, quality, streamId, updatePrompt]);
 
-  // Update recording timer display
   useEffect(() => {
     if (recording && recordStartTime) {
       const interval = setInterval(() => {
         setRecordingTime(Date.now() - recordStartTime);
-      }, 100); // Update every 100ms for smooth counter
+      }, 100);
 
       return () => clearInterval(interval);
     } else {
@@ -566,7 +630,6 @@ export default function Capture() {
     }
   }, [recording, recordStartTime]);
 
-  // Listen for video playback to enable recording
   useEffect(() => {
     if (playerContainerRef.current) {
       const video = playerContainerRef.current.querySelector('video');
@@ -579,7 +642,6 @@ export default function Capture() {
         video.addEventListener('pause', handlePause);
         video.addEventListener('waiting', handleWaiting);
 
-        // Check initial state
         if (!video.paused && video.readyState >= 3) {
           setIsPlaying(true);
         }
@@ -591,97 +653,202 @@ export default function Capture() {
         };
       }
     }
-  }, [playbackId, src]);
+  }, [playbackId, src, streamStarted]);
 
-  if (!cameraType) {
-    // Show loading state while auto-starting on desktop
-    if (loading) {
-      return (
-        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-background">
-          <div className="max-w-md w-full text-center space-y-8">
-            <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto" />
-            <p className="text-muted-foreground">Starting camera...</p>
-          </div>
-        </div>
-      );
-    }
-
-    // Camera selection screen (only shown on mobile/tablet devices)
-    const showMultipleCameras = hasMultipleCameras();
-
+  // Render params configuration UI (before stream is started)
+  if (!streamStarted) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-neutral-950 text-neutral-200">
-        <div className="max-w-md w-full text-center space-y-8">
-          <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent mb-2">
-              {showMultipleCameras ? 'Choose Camera' : 'Start Camera'}
+      <div className="min-h-screen bg-neutral-950 text-neutral-200 p-4">
+        <div className="max-w-2xl mx-auto space-y-6">
+          <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="mb-2">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+
+          <div className="text-center space-y-2">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent">
+              Configure Your Stream
             </h1>
             <p className="text-neutral-400">
-              {showMultipleCameras ? 'Select which camera to use' : 'Start your webcam to begin'}
+              Set up your AI effects before you start streaming
             </p>
           </div>
 
-          <div className="space-y-4">
-            {showMultipleCameras ? (
-              <>
-                <Button
-                  onClick={() => selectCamera('front')}
-                  className="w-full h-20 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 transition-all duration-200"
-                  variant="outline"
-                >
-                  <div className="flex items-center gap-4">
-                    <Camera className="w-8 h-8 text-neutral-300" />
-                    <div className="text-left">
-                      <div className="font-semibold text-neutral-100">Front Camera</div>
-                      <div className="text-sm text-neutral-400">Selfie mode</div>
-                    </div>
-                  </div>
-                </Button>
+          {/* Controls */}
+          <div className="bg-neutral-950 rounded-3xl p-6 border border-neutral-800 space-y-4 shadow-inner">
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
+              <Input
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder={defaultPrompt || "Describe your AI effect..."}
+                className="bg-neutral-950 border-neutral-800 focus:border-neutral-600 focus:ring-0 text-neutral-100 placeholder:text-neutral-500"
+              />
+              <p className="text-xs text-neutral-500 mt-1">
+                Leave empty to use: "{defaultPrompt}"
+              </p>
+            </div>
 
-                <Button
-                  onClick={() => selectCamera('back')}
-                  className="w-full h-20 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 transition-all duration-200"
-                  variant="outline"
-                >
-                  <div className="flex items-center gap-4">
-                    <Camera className="w-8 h-8 text-neutral-300" />
-                    <div className="text-left">
-                      <div className="font-semibold text-neutral-100">Back Camera</div>
-                      <div className="text-sm text-neutral-400">Environment mode</div>
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Texture
+              </label>
+
+              <div className="flex items-center gap-4">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="flex items-center gap-2 bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 !w-16 !h-16 rounded-full overflow-hidden px-0 py-0 w-full sm:w-auto"
+                    >
+                      {selectedTexture ? (
+                        <>
+                          <img
+                            src={TEXTURES.find((t) => t.id === selectedTexture)?.url}
+                            alt="Selected texture"
+                            className="w-8 h-8 object-cover rounded"
+                          />
+
+                        </>
+                        ) : (
+                          <ImageOff className="w-5 h-5 text-neutral-400" />
+                        )}
+                    </Button>
+                  </PopoverTrigger>
+
+                  <PopoverContent
+                    align="start"
+                    sideOffset={8}
+                    className="w-[90vw] sm:w-80 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-4"
+                  >
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                      <Button
+                        onClick={() => setSelectedTexture(null)}
+                        variant={selectedTexture === null ? "default" : "outline"}
+                        className={`aspect-square ${
+                          selectedTexture === null
+                            ? "bg-neutral-800 text-neutral-100"
+                            : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"
+                        }`}
+                      >
+                        <ImageOff className="w-5 h-5 text-neutral-400" />
+                      </Button>
+                      {TEXTURES.map((texture) => (
+                        <Button
+                          key={texture.id}
+                          onClick={() => setSelectedTexture(texture.id)}
+                          variant={selectedTexture === texture.id ? "default" : "outline"}
+                          className={`aspect-square p-0 overflow-hidden ${
+                            selectedTexture === texture.id
+                              ? "ring-2 ring-neutral-400"
+                              : "border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850"
+                          }`}
+                        >
+                          <img
+                            src={texture.url}
+                            alt={texture.name}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                        </Button>
+                      ))}
                     </div>
+                  </PopoverContent>
+                </Popover>
+
+                {selectedTexture && (
+                  <div className="flex-1">
+                    <label className="text-sm font-medium block mb-1 text-neutral-300">
+                      Strength: {textureWeight[0].toFixed(2)}
+                    </label>
+                    <Slider
+                      value={textureWeight}
+                      onValueChange={setTextureWeight}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      className="w-full accent-neutral-400"
+                    />
                   </div>
-                </Button>
-              </>
-            ) : (
-              <Button
-                onClick={() => selectCamera('front')}
-                className="w-full h-20 bg-gradient-to-r from-primary to-accent text-white transition-all duration-200"
-              >
-                <div className="flex items-center gap-4">
-                  <Camera className="w-8 h-8" />
-                  <div className="text-left">
-                    <div className="font-semibold text-lg">Start Webcam</div>
-                    <div className="text-sm opacity-90">Begin recording</div>
-                  </div>
-                </div>
-              </Button>
-            )}
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Creativity: {creativity[0].toFixed(1)}
+              </label>
+              <Slider
+                value={creativity}
+                onValueChange={setCreativity}
+                min={1}
+                max={10}
+                step={0.1}
+                className="w-full accent-neutral-400"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Quality: {quality[0].toFixed(2)}
+              </label>
+              <Slider
+                value={quality}
+                onValueChange={setQuality}
+                min={0}
+                max={1}
+                step={0.01}
+                className="w-full accent-neutral-400"
+              />
+            </div>
           </div>
+
+          {/* Start Stream Button */}
+          <Button
+            onClick={handleStartStream}
+            disabled={loading || !backgroundStreamInitialized}
+            className="w-full h-16 bg-gradient-to-r from-primary to-accent text-white font-semibold rounded-2xl hover:from-primary/90 hover:to-accent/90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Starting camera...
+              </span>
+            ) : !backgroundStreamInitialized ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Preparing stream...
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Play className="w-6 h-6" />
+                Start Stream
+              </span>
+            )}
+          </Button>
+
+          {backgroundStreamInitialized && !loading && (
+            <p className="text-center text-sm text-neutral-500">
+              ✨ Stream ready! Click to start your camera
+            </p>
+          )}
         </div>
       </div>
     );
   }
 
+  // Render main streaming UI (after stream is started)
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-200 p-4">
       <div className="max-w-2xl mx-auto space-y-4">
-        {/* Main Video Output */}
-
         <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="mb-6">
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
-        <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
+
+        {/* Main Video Output - Animated slide-down */}
+        <div 
+          className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg animate-in slide-in-from-top duration-500"
+        >
           {playbackId && src ? (
             <div
               ref={playerContainerRef}
@@ -720,8 +887,8 @@ export default function Capture() {
             </div>
           )}
 
-          {/* PiP Source Preview */}
-          <div className="absolute bottom-4 right-4 w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
+          {/* PiP Source Preview - Animated */}
+          <div className="absolute bottom-4 right-4 w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-lg animate-in fade-in zoom-in duration-300 delay-300">
             <video
               ref={sourceVideoRef}
               autoPlay
@@ -764,8 +931,8 @@ export default function Capture() {
           )}
         </Button>
 
-        {/* Controls */}
-        <div className="bg-neutral-950 rounded-3xl p-6 border border-neutral-800 space-y-4 shadow-inner">
+        {/* Controls - Animated slide-down */}
+        <div className="bg-neutral-950 rounded-3xl p-6 border border-neutral-800 space-y-4 shadow-inner animate-in slide-in-from-top duration-500 delay-150">
           <div>
             <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
             <Input
