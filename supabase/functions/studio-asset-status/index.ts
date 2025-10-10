@@ -38,16 +38,30 @@ serve(async (req) => {
     }
 
     const data = await response.json();
-    console.log('Asset status:', data.status);
+    console.log('Asset status response:', JSON.stringify(data, null, 2));
 
-    // Return normalized asset data
+    // Extract status - can be nested in status.phase or direct
+    const status = data.status?.phase || data.status;
+    console.log('Asset status:', status);
+
+    // Return normalized asset data with error details if present
     // Livepeer API returns playbackId, not asset_playback_id
-    return new Response(JSON.stringify({
-      status: data.status?.phase || data.status,
+    const result: any = {
+      status: status,
       playbackId: data.playbackId || data.id, // fallback to id if playbackId not present
       downloadUrl: data.downloadUrl,
       assetId: data.id,
-    }), {
+    };
+
+    // Include error information if the asset failed
+    if (data.status?.errorMessage || data.errors) {
+      result.error = {
+        message: data.status?.errorMessage || JSON.stringify(data.errors),
+      };
+      console.error('Asset has errors:', result.error);
+    }
+
+    return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error: any) {

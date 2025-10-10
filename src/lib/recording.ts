@@ -39,9 +39,12 @@ export class VideoRecorder {
     }
 
     // Try different MIME types in order of preference
+    // Prefer VP9 with Opus for better quality and compatibility
     const mimeCandidates = [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
       'video/webm',
     ];
 
@@ -53,20 +56,30 @@ export class VideoRecorder {
 
     console.log('Recording with MIME type:', this.mimeType);
 
-    // Create MediaRecorder
-    this.recorder = new MediaRecorder(stream, { mimeType: this.mimeType });
+    // Create MediaRecorder with optimized settings
+    this.recorder = new MediaRecorder(stream, {
+      mimeType: this.mimeType,
+      videoBitsPerSecond: 2500000, // 2.5 Mbps for good quality
+    });
     this.chunks = [];
     this.startTime = Date.now();
 
     // Collect data chunks
     this.recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
+        console.log('Chunk received:', e.data.size, 'bytes');
         this.chunks.push(e.data);
       }
     };
 
-    // Start recording with 100ms timeslice for better chunking
-    this.recorder.start(100);
+    // Add error handler
+    this.recorder.onerror = (e: Event) => {
+      console.error('MediaRecorder error:', e);
+    };
+
+    // Start recording with 1000ms timeslice for stable chunks
+    // Shorter timeslices can cause incomplete/invalid WebM files
+    this.recorder.start(1000);
   }
 
   /**
@@ -78,15 +91,42 @@ export class VideoRecorder {
     }
 
     // Stop the recorder and wait for it to finish
-    await new Promise<void>((resolve) => {
-      this.recorder!.onstop = () => resolve();
+    // We need to wait for both the stop event AND final data chunks
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Recording stop timed out'));
+      }, 5000);
+
+      this.recorder!.onstop = () => {
+        clearTimeout(timeout);
+        // Wait a bit for final chunks to arrive
+        setTimeout(() => resolve(), 100);
+      };
+
       this.recorder!.stop();
     });
 
     const durationMs = Date.now() - this.startTime;
+    
+    // Ensure we have chunks
+    if (this.chunks.length === 0) {
+      throw new Error('No video data recorded - the recording may have failed');
+    }
+
+    // Create blob with explicit type
     const blob = new Blob(this.chunks, { type: this.mimeType || 'video/webm' });
 
-    console.log('Recording stopped:', { durationMs, size: blob.size, type: blob.type });
+    console.log('Recording stopped:', { 
+      durationMs, 
+      size: blob.size, 
+      type: blob.type,
+      chunks: this.chunks.length 
+    });
+
+    // Validate blob size (should be at least 1KB for a valid video)
+    if (blob.size < 1000) {
+      throw new Error(`Recording too small (${blob.size} bytes) - video may be corrupted`);
+    }
 
     return { blob, durationMs, mimeType: this.mimeType };
   }
@@ -113,9 +153,14 @@ export async function uploadToLivepeer(
     { body: {} }
   );
 
-  if (uploadError) throw uploadError;
+  if (uploadError) {
+    console.error('Failed to request upload URL:', uploadError);
+    throw new Error(`Failed to request upload: ${uploadError.message || 'Unknown error'}`);
+  }
+  
   if (!uploadData?.uploadUrl || !uploadData?.assetId) {
-    throw new Error('Failed to get upload URL');
+    console.error('Invalid upload response:', uploadData);
+    throw new Error('Failed to get upload URL from server');
   }
 
   console.log('Got upload URL for asset:', uploadData.assetId);
@@ -123,30 +168,37 @@ export async function uploadToLivepeer(
   // Step 2: Upload the blob
   const file = new File([blob], filename, { type: blob.type });
 
-  if (uploadData.tus?.url) {
-    // TODO: Implement TUS upload if needed
-    console.log('TUS upload available, but using direct PUT for simplicity');
-  }
-
-  console.log('Uploading blob...', { size: blob.size, type: blob.type });
+  console.log('Uploading blob...', { 
+    size: blob.size, 
+    type: blob.type,
+    filename 
+  });
+  
   const putResponse = await fetch(uploadData.uploadUrl, {
     method: 'PUT',
     headers: {
-      'Content-Type': file.type,
+      'Content-Type': blob.type || 'video/webm',
     },
-    body: file,
+    body: blob, // Use blob directly instead of File wrapper
   });
 
   if (!putResponse.ok) {
-    throw new Error(`Upload failed: ${putResponse.status} ${putResponse.statusText}`);
+    const errorText = await putResponse.text().catch(() => 'Unknown error');
+    console.error('Upload failed:', putResponse.status, errorText);
+    throw new Error(`Upload failed: ${putResponse.status} - ${errorText}`);
   }
 
   console.log('Upload successful, waiting for asset to be ready...');
 
-  // Step 3: Poll for asset readiness
+  // Step 3: Poll for asset readiness with better error handling
   let attempts = 0;
-  const maxAttempts = 60; // 2 minutes max
-  let assetData: { status?: string; playbackId?: string; downloadUrl?: string } | null = null;
+  const maxAttempts = 120; // 2 minutes max (polling every 1s)
+  let assetData: { 
+    status?: string; 
+    playbackId?: string; 
+    downloadUrl?: string;
+    error?: { message?: string };
+  } | null = null;
 
   while (attempts < maxAttempts) {
     const { data, error } = await supabase.functions.invoke('studio-asset-status', {
@@ -155,12 +207,12 @@ export async function uploadToLivepeer(
 
     if (error) {
       console.error('Error checking asset status:', error);
-      throw error;
+      throw new Error(`Failed to check asset status: ${error.message || 'Unknown error'}`);
     }
 
-    assetData = data as { status?: string; playbackId?: string; downloadUrl?: string };
-    const status = data?.status;
-    console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, status);
+    assetData = data as typeof assetData;
+    const status = assetData?.status;
+    console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, status, assetData);
 
     if (status === 'ready') {
       console.log('Asset is ready!', assetData);
@@ -168,7 +220,9 @@ export async function uploadToLivepeer(
     }
 
     if (status === 'failed' || status === 'error') {
-      throw new Error('Asset processing failed');
+      const errorMsg = assetData?.error?.message || 'Unknown processing error';
+      console.error('Asset processing failed:', errorMsg, assetData);
+      throw new Error(`Video processing failed: ${errorMsg}. The video file may be invalid or unsupported.`);
     }
 
     attempts++;
@@ -176,12 +230,18 @@ export async function uploadToLivepeer(
   }
 
   if (assetData?.status !== 'ready') {
-    throw new Error('Asset processing timeout - asset not ready after 2 minutes');
+    console.error('Asset processing timeout. Last status:', assetData);
+    throw new Error('Video processing timed out after 2 minutes. Please try recording again.');
+  }
+
+  if (!assetData?.playbackId) {
+    console.error('Asset ready but no playbackId:', assetData);
+    throw new Error('Video processed but playback ID is missing');
   }
 
   return {
     assetId: uploadData.assetId,
-    playbackId: assetData.playbackId,
+    playbackId: assetData.playbackId!,
     downloadUrl: assetData.downloadUrl,
   };
 }
