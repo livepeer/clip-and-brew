@@ -563,6 +563,31 @@ navigate('/path');
   - Recording captures correctly mirrored video
   - Works consistently across all browsers
 
+### ICE Gathering Delay / Slow WHIP Startup (✅ RESOLVED)
+**Issue**: WHIP request was delayed by 40+ seconds waiting for ICE gathering to complete. Single STUN server (`stun.l.google.com:19302`) was slow/timing out.
+
+**Solution** (`src/lib/daydream.ts`):
+```typescript
+const pc = new RTCPeerConnection({
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ],
+  iceCandidatePoolSize: 3,
+});
+
+// Add 2-second timeout for ICE gathering
+const ICE_TIMEOUT = 2000;
+await Promise.race([iceGatheringPromise, timeoutPromise]);
+```
+
+**Impact**: WHIP startup reduced from 40+ seconds to ~2-3 seconds
+- Multiple STUN servers provide redundancy
+- Timeout prevents indefinite waiting
+- `iceCandidatePoolSize: 3` pre-gathers candidates faster
+- WebRTC works fine with partial candidates
+
 ### Daydream Playback IDs Not Recognized
 **Issue**: `getSrc()` from `@livepeer/react/external` returns `null` for Daydream playback IDs.
 
@@ -573,6 +598,23 @@ const src = [
   { src: `https://livepeer.studio/hls/${playbackId}/index.m3u8`, mime: 'application/vnd.apple.mpegurl', type: 'hls' }
 ];
 ```
+
+### Missing Edge Function Configs (✅ RESOLVED)
+**Issue**: Edge functions `studio-request-upload`, `studio-asset-status`, and `save-clip` were missing from `supabase/config.toml`, causing 404 errors.
+
+**Solution**: Added all functions to config with `verify_jwt = false`:
+```toml
+[functions.studio-request-upload]
+verify_jwt = false
+
+[functions.studio-asset-status]
+verify_jwt = false
+
+[functions.save-clip]
+verify_jwt = false
+```
+
+**Impact**: Clip upload/save flow now works correctly.
 
 ### Video `object-fit: cover` Issues
 **Issue**: Getting video to properly fill square container with `object-fit: cover` proved challenging with complex CSS/player interactions.
@@ -747,7 +789,9 @@ Avoid:
 **Last Updated**: 2025-10-10
 - Canvas-based mirroring at source for natural selfie mode
 - Interactive ticket redemption with swipe-to-validate UX
-- Fixed auto-start camera delay and edge function config issues
+- Fixed ICE gathering delay (40s → 2s) with STUN redundancy + timeout
+- Fixed missing edge function configs causing 404 errors
+- Fixed React hook dependency issues in auto-start flow
 **Project Status**: Active development for Livepeer × Daydream Summit (Brewdream)
 **Maintainer Note**: Keep this file concise but comprehensive. Every section should answer "what do I need to know to work on this?" Always check PRD for feature requirements before implementing.
 

@@ -127,36 +127,10 @@ export default function Capture() {
     }
   };
 
-  const selectCamera = useCallback(async (type: 'front' | 'back') => {
-    setCameraType(type);
-    const randomPrompt = type === 'front'
-      ? FRONT_PROMPTS[Math.floor(Math.random() * FRONT_PROMPTS.length)]
-      : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
-    setPrompt(randomPrompt);
-
-    await initializeStream(type);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Auto-start camera on desktop (non-mobile devices)
-  useEffect(() => {
-    if (!autoStartChecked && cameraType === null && !loading) {
-      const shouldAutoStart = !hasMultipleCameras();
-      if (shouldAutoStart) {
-        setAutoStartChecked(true);
-        // Desktop device - auto-start with default camera
-        selectCamera('front');
-      } else {
-        setAutoStartChecked(true);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStartChecked, cameraType, loading]);
-
-  const initializeStream = async (type: 'front' | 'back') => {
+  const initializeStream = useCallback(async (type: 'front' | 'back') => {
     setLoading(true);
     try {
-      // Create Daydream stream using the helper
+      // Create Daydream stream
       const streamData = await createDaydreamStream();
 
       setStreamId(streamData.id);
@@ -195,7 +169,33 @@ export default function Capture() {
     } finally {
       setLoading(false);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast]); // startWebRTCPublish is stable (doesn't depend on props/state)
+
+  const selectCamera = useCallback(async (type: 'front' | 'back') => {
+    setCameraType(type);
+    const randomPrompt = type === 'front'
+      ? FRONT_PROMPTS[Math.floor(Math.random() * FRONT_PROMPTS.length)]
+      : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
+    setPrompt(randomPrompt);
+
+    await initializeStream(type);
+  }, [initializeStream]);
+
+  // Auto-start camera on desktop (non-mobile devices)
+  useEffect(() => {
+    if (!autoStartChecked && cameraType === null && !loading) {
+      const shouldAutoStart = !hasMultipleCameras();
+      if (shouldAutoStart) {
+        setAutoStartChecked(true);
+        // Desktop device - auto-start with default camera
+        selectCamera('front');
+      } else {
+        setAutoStartChecked(true);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartChecked, cameraType, loading]);
 
   /**
    * Mirror a video stream by rendering it through a canvas

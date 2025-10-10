@@ -60,7 +60,12 @@ export async function startWhipPublish(
   stream: MediaStream
 ): Promise<RTCPeerConnection> {
   const pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+    ],
+    iceCandidatePoolSize: 3,
   });
 
   // Add all tracks from the stream
@@ -73,20 +78,25 @@ export async function startWhipPublish(
   });
   await pc.setLocalDescription(offer);
 
-  // Wait for ICE gathering to complete (non-trickle ICE)
-  await new Promise<void>((resolve) => {
-    if (pc.iceGatheringState === 'complete') {
-      resolve();
-    } else {
-      const checkState = () => {
-        if (pc.iceGatheringState === 'complete') {
-          pc.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
-        }
-      };
-      pc.addEventListener('icegatheringstatechange', checkState);
-    }
-  });
+  // Wait for ICE gathering to complete (non-trickle ICE) with timeout
+  const ICE_TIMEOUT = 2000; // 2 second timeout - aggressive for fast UX
+
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (pc.iceGatheringState === 'complete') {
+            pc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        pc.addEventListener('icegatheringstatechange', checkState);
+      }
+    }),
+    new Promise<void>((resolve) => setTimeout(resolve, ICE_TIMEOUT))
+  ]);
 
   // Send offer to WHIP endpoint
   const offerSdp = pc.localDescription!.sdp!;
@@ -109,7 +119,6 @@ export async function startWhipPublish(
     sdp: answerSdp,
   });
 
-  console.log('WHIP publish started successfully');
   return pc;
 }
 
