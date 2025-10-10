@@ -17,7 +17,7 @@ serve(async (req) => {
     }
 
     const { assetId } = await req.json();
-    
+
     if (!assetId) {
       throw new Error('assetId is required');
     }
@@ -41,19 +41,19 @@ serve(async (req) => {
     console.log('Asset status:', data.status);
 
     // Return normalized asset data
+    // Livepeer API returns playbackId, not asset_playback_id
     return new Response(JSON.stringify({
       status: data.status?.phase || data.status,
-      playbackId: data.playbackId,
+      playbackId: data.playbackId || data.id, // fallback to id if playbackId not present
       downloadUrl: data.downloadUrl,
       assetId: data.id,
-      ...data
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
     console.error('Error in studio-asset-status function:', error);
-    return new Response(JSON.stringify({ 
-      error: error.message 
+    return new Response(JSON.stringify({
+      error: error.message
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -101,7 +101,9 @@ export default function Capture() {
 
   const [recording, setRecording] = useState(false);
   const [recordStartTime, setRecordStartTime] = useState<number | null>(null);
+  const [recordingTime, setRecordingTime] = useState(0);
   const [captureSupported, setCaptureSupported] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const sourceVideoRef = useRef<HTMLVideoElement>(null);
@@ -304,6 +306,11 @@ export default function Capture() {
   };
 
   const startRecording = async () => {
+    // Desktop mode: if already recording, ignore (stop will be called separately)
+    if (!isMobile && recording) {
+      return;
+    }
+
     // Get the video element from the Livepeer Player
     const playerVideo = playerContainerRef.current?.querySelector('video') as HTMLVideoElement;
 
@@ -343,6 +350,14 @@ export default function Capture() {
         description: error instanceof Error ? error.message : 'Failed to start recording',
         variant: 'destructive',
       });
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (recording) {
+      await stopRecording();
+    } else {
+      await startRecording();
     }
   };
 
@@ -451,6 +466,46 @@ export default function Capture() {
       return () => clearTimeout(debounce);
     }
   }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId, updatePrompt]);
+
+  // Update recording timer display
+  useEffect(() => {
+    if (recording && recordStartTime) {
+      const interval = setInterval(() => {
+        setRecordingTime(Date.now() - recordStartTime);
+      }, 100); // Update every 100ms for smooth counter
+
+      return () => clearInterval(interval);
+    } else {
+      setRecordingTime(0);
+    }
+  }, [recording, recordStartTime]);
+
+  // Listen for video playback to enable recording
+  useEffect(() => {
+    if (playerContainerRef.current) {
+      const video = playerContainerRef.current.querySelector('video');
+      if (video) {
+        const handlePlay = () => setIsPlaying(true);
+        const handlePause = () => setIsPlaying(false);
+        const handleWaiting = () => setIsPlaying(false);
+
+        video.addEventListener('playing', handlePlay);
+        video.addEventListener('pause', handlePause);
+        video.addEventListener('waiting', handleWaiting);
+
+        // Check initial state
+        if (!video.paused && video.readyState >= 3) {
+          setIsPlaying(true);
+        }
+
+        return () => {
+          video.removeEventListener('playing', handlePlay);
+          video.removeEventListener('pause', handlePause);
+          video.removeEventListener('waiting', handleWaiting);
+        };
+      }
+    }
+  }, [playbackId, src]);
 
   if (!cameraType) {
     // Show loading state while auto-starting on desktop
@@ -561,7 +616,8 @@ export default function Capture() {
                     style={{
                       width: '100%',
                       height: '100%',
-                      objectFit: 'cover'
+                      objectFit: 'cover',
+                      transform: cameraType === 'front' ? 'scaleX(-1)' : 'none'
                     }}
                   />
                   <Player.LoadingIndicator>
@@ -587,9 +643,46 @@ export default function Capture() {
               playsInline
               muted
               className="w-full h-full object-cover"
+              style={{
+                transform: cameraType === 'front' ? 'scaleX(-1)' : 'none'
+              }}
             />
           </div>
         </div>
+
+        {/* Record Button */}
+        {!captureSupported && (
+          <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
+            ⚠️ Video capture not supported on this browser. Recording is disabled.
+          </div>
+        )}
+        <Button
+          onClick={isMobile ? undefined : toggleRecording}
+          onPointerDown={isMobile ? startRecording : undefined}
+          onPointerUp={isMobile ? stopRecording : undefined}
+          onPointerLeave={isMobile ? stopRecording : undefined}
+          disabled={loading || !playbackId || !captureSupported || !isPlaying}
+          className="w-full h-16 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {recording ? (
+            <span className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+              Recording... ({(recordingTime / 1000).toFixed(1)}s)
+            </span>
+          ) : loading ? (
+            <Loader2 className="w-6 h-6 animate-spin" />
+          ) : !isPlaying ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Starting stream...
+            </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              <Sparkles className="w-6 h-6 text-neutral-900" />
+              {isMobile ? 'Hold to Brew' : 'Click to Start Brewing'}
+            </span>
+          )}
+        </Button>
 
         {/* Controls */}
         <div className="bg-neutral-950 rounded-3xl p-6 border border-neutral-800 space-y-4 shadow-inner">
@@ -715,36 +808,6 @@ export default function Capture() {
             />
           </div>
         </div>
-
-        {/* Record Button */}
-        {!captureSupported && (
-          <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
-            ⚠️ Video capture not supported on this browser. Recording is disabled.
-          </div>
-        )}
-        <Button
-          onPointerDown={startRecording}
-          onPointerUp={stopRecording}
-          onPointerLeave={stopRecording}
-          disabled={loading || !playbackId || !captureSupported}
-          className="w-full h-16 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {recording ? (
-            <span className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              Recording... (
-              {recordStartTime ? ((Date.now() - recordStartTime) / 1000).toFixed(1) : 0}
-              s)
-            </span>
-          ) : loading ? (
-            <Loader2 className="w-6 h-6 animate-spin" />
-          ) : (
-            <span className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-neutral-900" />
-              Hold to Brew
-            </span>
-          )}
-        </Button>
       </div>
     </div>
   );
