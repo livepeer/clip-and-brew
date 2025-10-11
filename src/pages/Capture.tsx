@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -17,6 +17,7 @@ import { getSrc } from '@livepeer/react/external';
 import { createDaydreamStream, startWhipPublish, updateDaydreamPrompts } from '@/lib/daydream';
 import type { StreamDiffusionParams } from '@/lib/daydream';
 import { VideoRecorder, uploadToLivepeer, saveClipToDatabase } from '@/lib/recording';
+import { captureVideoFrameDataUrl, generateTransformation } from '@/lib/transforms';
 
 const FRONT_PROMPTS = [
   "studio ghibli portrait, soft rim light",
@@ -129,6 +130,10 @@ export default function Capture() {
   const [showSlowLoadingMessage, setShowSlowLoadingMessage] = useState(false);
   const [uploadingClip, setUploadingClip] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [transforming, setTransforming] = useState(false);
+  const [transformedImageUrl, setTransformedImageUrl] = useState<string | null>(null);
+  const [transformedPrompt, setTransformedPrompt] = useState<string | null>(null);
+  const [originalSnapshotUrl, setOriginalSnapshotUrl] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const sourceVideoRef = useRef<HTMLVideoElement>(null);
@@ -299,6 +304,34 @@ export default function Capture() {
       throw error;
     }
   };
+
+  const refreshStyle = useCallback(async () => {
+    try {
+      if (!playerContainerRef.current) return;
+      const playerVideo = playerContainerRef.current.querySelector('video') as HTMLVideoElement | null;
+      if (!playerVideo) {
+        toast({ title: 'Video not ready', description: 'Please wait for the stream to start', variant: 'destructive' });
+        return;
+      }
+      setTransforming(true);
+      // Capture a square frame from the current output
+      const frameDataUrl = captureVideoFrameDataUrl(playerVideo, 768);
+      // Optional: pass current typed prompt as a soft style hint
+      const { prompt: aiPrompt, imageUrl } = await generateTransformation({
+        imageBase64: frameDataUrl,
+        styleHint: undefined,
+        provider: 'openai',
+      });
+      setOriginalSnapshotUrl(frameDataUrl);
+      setTransformedPrompt(aiPrompt);
+      setTransformedImageUrl(imageUrl);
+    } catch (error) {
+      console.error('Refresh style failed', error);
+      toast({ title: 'Transform failed', description: error instanceof Error ? error.message : String(error), variant: 'destructive' });
+    } finally {
+      setTransforming(false);
+    }
+  }, [playerContainerRef, toast]);
 
   const updatePrompt = useCallback(async () => {
     if (!streamId) return;
@@ -744,64 +777,85 @@ export default function Capture() {
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
-        <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
-          {playbackId && src ? (
-            <div
-              ref={playerContainerRef}
-              className="player-container w-full h-full [&_[data-radix-aspect-ratio-wrapper]]:!h-full [&_[data-radix-aspect-ratio-wrapper]]:!pb-0"
-              style={{ width: '100%', height: '100%', position: 'relative' }}
-            >
-              <Player.Root
-                src={src}
-                autoPlay
-                lowLatency="force"
-              >
-                <Player.Container
-                  className="w-full h-full"
+        <div className="relative">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
+              {playbackId && src ? (
+                <div
+                  ref={playerContainerRef}
+                  className="player-container w-full h-full [&_[data-radix-aspect-ratio-wrapper]]:!h-full [&_[data-radix-aspect-ratio-wrapper]]:!pb-0"
                   style={{ width: '100%', height: '100%', position: 'relative' }}
                 >
-                  <Player.Video
-                    className="w-full h-full"
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover'
-                    }}
-                  />
-                  <Player.LoadingIndicator>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950/50 gap-4">
-                      <Loader2 className="w-12 h-12 animate-spin text-primary" />
+                  <Player.Root src={src} autoPlay lowLatency="force">
+                    <Player.Container
+                      className="w-full h-full"
+                      style={{ width: '100%', height: '100%', position: 'relative' }}
+                    >
+                      <Player.Video
+                        className="w-full h-full"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                      <Player.LoadingIndicator>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950/50 gap-4">
+                          <Loader2 className="w-12 h-12 animate-spin text-primary" />
+                          <p className="text-sm text-neutral-300 text-center px-4 min-h-[20px]">
+                            {showSlowLoadingMessage && "Hang tight! Stream loading can take up to 30 seconds..."}
+                          </p>
+                        </div>
+                      </Player.LoadingIndicator>
+                    </Player.Container>
+                  </Player.Root>
+                </div>
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-4">
+                  <Loader2 className="w-12 h-12 animate-spin text-neutral-400" />
+                  {playbackId && !src && (
+                    <>
+                      <p className="text-xs text-neutral-500">Loading stream...</p>
                       <p className="text-sm text-neutral-300 text-center px-4 min-h-[20px]">
                         {showSlowLoadingMessage && "Hang tight! Stream loading can take up to 30 seconds..."}
                       </p>
-                    </div>
-                  </Player.LoadingIndicator>
-                </Player.Container>
-              </Player.Root>
+                    </>
+                  )}
+                </div>
+              )}
+              {/* PiP Source Preview */}
+              <div className="absolute bottom-4 right-4 w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
+                <video ref={sourceVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+              </div>
             </div>
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center gap-4">
-              <Loader2 className="w-12 h-12 animate-spin text-neutral-400" />
-              {playbackId && !src && (
-                <>
-                  <p className="text-xs text-neutral-500">Loading stream...</p>
-                  <p className="text-sm text-neutral-300 text-center px-4 min-h-[20px]">
-                    {showSlowLoadingMessage && "Hang tight! Stream loading can take up to 30 seconds..."}
-                  </p>
-                </>
+
+            <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg flex items-center justify-center">
+              {transforming ? (
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                  <span className="text-sm text-neutral-400">Dreamifying your frame...</span>
+                </div>
+              ) : transformedImageUrl ? (
+                <img src={transformedImageUrl} alt="Transformed" className="w-full h-full object-cover" />
+              ) : (
+                <div className="text-neutral-500 text-sm px-6 text-center">Tap Refresh Style to generate a surreal transformation</div>
+              )}
+
+              {originalSnapshotUrl && (
+                <div className="absolute top-3 left-3 bg-neutral-900/70 text-neutral-200 text-[10px] px-2 py-1 rounded">
+                  Original captured
+                </div>
+              )}
+
+              {transformedPrompt && (
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-xs text-neutral-200">
+                  {transformedPrompt}
+                </div>
               )}
             </div>
-          )}
+          </div>
 
-          {/* PiP Source Preview */}
-          <div className="absolute bottom-4 right-4 w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
-            <video
-              ref={sourceVideoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
+          <div className="flex justify-end mt-3">
+            <Button onClick={refreshStyle} disabled={!isPlaying || transforming} variant="outline" className="gap-2 border-neutral-800 hover:border-neutral-600">
+              <RefreshCw className={`w-4 h-4 ${transforming ? 'animate-spin' : ''}`} />
+              {transforming ? 'Dreamifying...' : 'Refresh Style'}
+            </Button>
           </div>
         </div>
 
