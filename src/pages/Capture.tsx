@@ -920,9 +920,9 @@ export default function Capture() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-neutral-950 text-neutral-200 overflow-hidden">
+    <div className="fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200">
       {/* Fixed Video Section - Square but smaller, starts from top */}
-      <div className="flex-shrink-0 px-4 pt-4 pb-3">
+      <div className="flex-shrink-0 px-4 pt-4 pb-3 bg-neutral-950">
         <div className="relative w-full max-w-md mx-auto aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
           {playbackId && src ? (
             <div
