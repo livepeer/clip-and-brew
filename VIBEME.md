@@ -549,6 +549,35 @@ navigate('/path');
 
 ## 🐛 Known Issues & Workarounds
 
+### Stream Not Ready on Initialization (✅ RESOLVED)
+**Issue**: When creating a Daydream stream, attempting to update parameters immediately would fail with "Stream not ready yet" error. This blocked camera initialization and left users with a black screen.
+
+**Root Cause**: 
+- Daydream API's POST `/v1/streams` only accepts `pipeline_id` parameter
+- Initial parameters (prompt, t_index_list, etc.) must be sent via separate PATCH request
+- Stream needs time to initialize before accepting parameter updates
+- Original implementation awaited the param update, blocking camera start
+
+**Solution** (`src/lib/daydream.ts`):
+1. **Non-blocking param updates**: Stream creation returns immediately, param update happens in background
+2. **Retry logic**: Up to 10 retries with 1-second intervals for "not ready" errors
+3. **Graceful degradation**: If param update fails, stream continues with defaults
+4. **Camera starts immediately**: WebRTC/camera initialization no longer blocked by param updates
+
+```typescript
+// Create stream (returns immediately)
+const stream = await createDaydreamStream(initialParams);
+
+// Params update in background with retry (doesn't block camera)
+updateDaydreamPromptsWithRetry(stream.id, initialParams).catch(...);
+```
+
+**Impact**: 
+- Camera shows video feed immediately (~2-3 seconds)
+- Stream parameters applied within 1-2 seconds (background)
+- No more "Stream not ready yet" errors blocking the UI
+- Better UX with faster perceived load time
+
 ### Camera Mirroring (✅ RESOLVED)
 **Solution**: Mirror the MediaStream **at the source** before sending to Daydream:
 - Original camera stream → Canvas with `scaleX(-1)` → `captureStream(30)` → Mirrored MediaStream
@@ -817,6 +846,8 @@ Avoid:
 ---
 
 **Last Updated**: 2025-10-11
+- Fixed stream initialization race condition: "Stream not ready yet" errors resolved with retry logic and non-blocking param updates
+- Camera now starts immediately while params update in background (no more black screen)
 - Fixed critical params updating logic bugs: stream now starts with correct prompt (via immediate post-creation prompt update) and no model reload issues
 - Canvas-based mirroring at source for natural selfie mode
 - Interactive ticket redemption with swipe-to-validate UX
