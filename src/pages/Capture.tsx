@@ -250,6 +250,9 @@ export default function Capture() {
       const initialTIndexList = calculateTIndexList(creativity[0], quality[0]);
       
       // Create Daydream stream with initial params to avoid default psychedelic
+      console.log('[CAPTURE] Creating stream with initial prompt:', initialPrompt);
+      console.log('[CAPTURE] Initial t_index_list:', initialTIndexList);
+      
       const initialParams: StreamDiffusionParams = {
         model_id: 'stabilityai/sdxl-turbo',
         prompt: initialPrompt,
@@ -291,7 +294,9 @@ export default function Capture() {
         },
       };
       
+      console.log('[CAPTURE] About to create stream with initialParams:', JSON.stringify(initialParams, null, 2));
       const streamData = await createDaydreamStream(initialParams);
+      console.log('[CAPTURE] Stream created successfully:', streamData);
 
       setStreamId(streamData.id);
       setPlaybackId(streamData.output_playback_id);
@@ -557,11 +562,18 @@ export default function Capture() {
   };
 
   const updatePrompt = useCallback(async () => {
-    if (!streamId) return;
+    if (!streamId) {
+      console.log('[CAPTURE] updatePrompt called but no streamId - skipping');
+      return;
+    }
+
+    console.log('[CAPTURE] updatePrompt called for stream:', streamId);
+    console.log('[CAPTURE] Current state - prompt:', prompt, 'creativity:', creativity[0], 'quality:', quality[0], 'texture:', selectedTexture);
 
     try {
       // Calculate t_index_list based on creativity and quality
       const tIndexList = calculateTIndexList(creativity[0], quality[0]);
+      console.log('[CAPTURE] Calculated t_index_list:', tIndexList);
 
       // Determine IP-Adapter settings when a texture is selected
       const selectedTextureObj = selectedTexture
@@ -627,10 +639,12 @@ export default function Capture() {
       }
 
       // Use the StreamDiffusion prompt helper with proper params
+      console.log('[CAPTURE] About to call updateDaydreamPrompts with params:', params);
       await updateDaydreamPrompts(streamId, params);
+      console.log('[CAPTURE] updateDaydreamPrompts completed successfully');
 
     } catch (error: unknown) {
-      console.error('Error updating prompt:', error);
+      console.error('[CAPTURE] Error updating prompt:', error);
     }
   }, [streamId, prompt, creativity, quality, selectedTexture, textureWeight]);
 
@@ -851,9 +865,10 @@ export default function Capture() {
   // Mark stream as initialized after the background initialization has had time to complete
   useEffect(() => {
     if (streamId && !streamInitialized) {
+      console.log('[CAPTURE] Stream created, waiting 3 seconds before marking initialized...');
       // Wait 3 seconds for the background initialization to complete before allowing updates
       const timer = setTimeout(() => {
-        console.log('Stream initialized - syncing current parameters');
+        console.log('[CAPTURE] Stream initialized - ready for parameter updates');
         setStreamInitialized(true);
       }, 3000);
       return () => clearTimeout(timer);
@@ -863,7 +878,8 @@ export default function Capture() {
   // When stream becomes initialized, immediately sync current UI state to stream
   useEffect(() => {
     if (streamId && streamInitialized && prompt) {
-      console.log('Stream just initialized - forcing parameter sync');
+      console.log('[CAPTURE] Stream just initialized - forcing parameter sync with current UI state');
+      console.log('[CAPTURE] Syncing: prompt=', prompt, 'creativity=', creativity[0], 'quality=', quality[0]);
       updatePrompt();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -872,8 +888,9 @@ export default function Capture() {
   useEffect(() => {
     // Only update if stream is initialized (skip the initial update when stream is first created)
     if (prompt && streamId && streamInitialized) {
+      console.log('[CAPTURE] Parameter changed, scheduling update in 500ms...');
       const debounce = setTimeout(() => {
-        console.log('Parameter changed - updating stream');
+        console.log('[CAPTURE] Debounce complete - updating stream with new parameters');
         updatePrompt();
       }, 500);
       return () => clearTimeout(debounce);

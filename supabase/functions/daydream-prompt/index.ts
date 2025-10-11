@@ -10,6 +10,8 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  console.log('[EDGE] daydream-prompt function called (version: 2025-10-11-debug)');
+
   try {
     const DAYDREAM_API_KEY = Deno.env.get('DAYDREAM_API_KEY');
     if (!DAYDREAM_API_KEY) {
@@ -21,7 +23,8 @@ serve(async (req) => {
       throw new Error('streamId is required');
     }
 
-    console.log('Sending prompt to stream:', streamId, promptBody);
+    console.log('[EDGE] Updating prompt for stream:', streamId);
+    console.log('[EDGE] Params being sent:', JSON.stringify(promptBody, null, 2));
 
     // Send the params body as-is to the PATCH endpoint
     // The body should be in format: { params: { ... } }
@@ -35,10 +38,11 @@ serve(async (req) => {
     });
 
     const data = await response.json();
-    console.log('Daydream prompt response:', data);
+    console.log('[EDGE] Daydream API response status:', response.status);
+    console.log('[EDGE] Daydream API response:', JSON.stringify(data, null, 2));
 
     if (!response.ok) {
-      console.error('Daydream API error:', data);
+      console.error('[EDGE] Daydream API error:', JSON.stringify(data, null, 2));
       return new Response(JSON.stringify({ error: data }), {
         status: response.status,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

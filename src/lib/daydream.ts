@@ -42,6 +42,8 @@ export interface StreamDiffusionParams {
  * If initialParams provided, the edge function handles parameter initialization with retry logic
  */
 export async function createDaydreamStream(initialParams?: StreamDiffusionParams): Promise<DaydreamStream> {
+  console.log('[DAYDREAM] Creating stream with initialParams:', JSON.stringify(initialParams, null, 2));
+  
   const { data, error } = await supabase.functions.invoke('daydream-stream', {
     body: { 
       pipeline_id: 'pip_SDXL-turbo',
@@ -49,9 +51,16 @@ export async function createDaydreamStream(initialParams?: StreamDiffusionParams
     }
   });
 
-  if (error) throw error;
-  if (!data) throw new Error('No stream data returned');
+  if (error) {
+    console.error('[DAYDREAM] Error creating stream:', error);
+    throw error;
+  }
+  if (!data) {
+    console.error('[DAYDREAM] No stream data returned from edge function');
+    throw new Error('No stream data returned');
+  }
 
+  console.log('[DAYDREAM] Stream created:', data);
   return data as DaydreamStream;
 }
 
@@ -189,10 +198,17 @@ export async function updateDaydreamPrompts(
         : {}),
     },
   };
+  
+  console.log('[DAYDREAM] Updating stream', streamId, 'with params:', JSON.stringify(body.params, null, 2));
 
-  const { error } = await supabase.functions.invoke('daydream-prompt', {
+  const { data, error } = await supabase.functions.invoke('daydream-prompt', {
     body: { streamId, ...body },
   });
 
-  if (error) throw error;
+  if (error) {
+    console.error('[DAYDREAM] Error from edge function:', error);
+    throw error;
+  }
+  
+  console.log('[DAYDREAM] Update successful, response:', data);
 }

@@ -14,6 +14,8 @@ async function initializeStreamParams(streamId: string, params: any, apiKey: str
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
+      console.log(`[EDGE] Attempt ${attempt + 1}: Sending params to Daydream:`, JSON.stringify(params, null, 2));
+      
       const response = await fetch(`https://api.daydream.live/v1/streams/${streamId}`, {
         method: 'PATCH',
         headers: {
@@ -26,7 +28,7 @@ async function initializeStreamParams(streamId: string, params: any, apiKey: str
       const data = await response.json();
       
       if (response.ok) {
-        console.log('✓ Stream params initialized successfully');
+        console.log('✓ Stream params initialized successfully:', JSON.stringify(data, null, 2));
         return;
       }
 
@@ -55,6 +57,8 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  console.log('[EDGE] daydream-stream function called (version: 2025-10-11-debug)');
+
   try {
     const DAYDREAM_API_KEY = Deno.env.get('DAYDREAM_API_KEY');
     if (!DAYDREAM_API_KEY) {
@@ -65,7 +69,7 @@ serve(async (req) => {
     const pipeline_id = body.pipeline_id || 'pip_SDXL-turbo';
     const initialParams = body.initialParams; // Optional initial parameters
 
-    console.log('Creating Daydream stream with pipeline:', pipeline_id);
+    console.log('[EDGE] Creating Daydream stream with pipeline:', pipeline_id);
 
     // Step 1: Create stream (only accepts pipeline_id)
     const createResponse = await fetch('https://api.daydream.live/v1/streams', {
@@ -92,10 +96,13 @@ serve(async (req) => {
 
     // Step 2: Initialize params if provided (with retry logic, non-blocking)
     if (initialParams) {
+      console.log('[EDGE] Received initialParams for stream', id, ':', JSON.stringify(initialParams, null, 2));
       // Fire and forget - don't block the response
       initializeStreamParams(id, initialParams, DAYDREAM_API_KEY).catch(err => {
         console.error('Background param initialization failed:', err);
       });
+    } else {
+      console.warn('[EDGE] No initialParams provided - stream will start with defaults');
     }
 
     // Return immediately with stream info
