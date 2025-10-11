@@ -920,15 +920,18 @@ export default function Capture() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200 p-4">
-      <div className="max-w-2xl mx-auto space-y-4">
-        {/* Main Video Output */}
-
-        <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="mb-6">
+    <div className="h-screen flex flex-col bg-neutral-950 text-neutral-200 overflow-hidden">
+      {/* Fixed Header with Back Button */}
+      <div className="flex-shrink-0 px-4 pt-3 pb-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="text-neutral-400 hover:text-neutral-200">
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
-        <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
+      </div>
+
+      {/* Fixed Video Section - Square but smaller */}
+      <div className="flex-shrink-0 px-4 pb-3">
+        <div className="relative w-full max-w-md mx-auto aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
           {playbackId && src ? (
             <div
               ref={playerContainerRef}
@@ -978,13 +981,13 @@ export default function Capture() {
           )}
 
           {/* Microphone Toggle Button */}
-          <div className="absolute bottom-4 left-4">
+          <div className="absolute bottom-3 left-3">
             <Button
               onClick={toggleMicrophone}
               disabled={loading || !playbackId}
               size="icon"
               variant={micEnabled ? "default" : "secondary"}
-              className={`w-14 h-14 rounded-full shadow-lg transition-all duration-200 ${
+              className={`w-12 h-12 rounded-full shadow-lg transition-all duration-200 ${
                 micEnabled 
                   ? 'bg-green-600 hover:bg-green-700 text-white' 
                   : micPermissionDenied 
@@ -994,15 +997,15 @@ export default function Capture() {
               title={micEnabled ? 'Disable microphone' : micPermissionDenied ? 'Microphone access denied' : 'Enable microphone'}
             >
               {micEnabled ? (
-                <Mic className="w-6 h-6" />
+                <Mic className="w-5 h-5" />
               ) : (
-                <MicOff className="w-6 h-6" />
+                <MicOff className="w-5 h-5" />
               )}
             </Button>
           </div>
 
           {/* PiP Source Preview */}
-          <div className="absolute bottom-4 right-4 w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
+          <div className="absolute bottom-3 right-3 w-20 h-20 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
             <video
               ref={sourceVideoRef}
               autoPlay
@@ -1012,182 +1015,187 @@ export default function Capture() {
             />
           </div>
         </div>
+      </div>
 
-        {/* Record Button */}
-        {!captureSupported && (
-          <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
-            ⚠️ Video capture not supported on this browser. Recording is disabled.
-          </div>
-        )}
-        <Button
-          onClick={isMobile ? undefined : toggleRecording}
-          onPointerDown={isMobile ? startRecording : undefined}
-          onPointerUp={isMobile ? stopRecording : undefined}
-          onPointerLeave={isMobile ? stopRecording : undefined}
-          disabled={loading || uploadingClip || !playbackId || !captureSupported || !isPlaying}
-          className="w-full h-16 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {recording ? (
-            <span className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              Recording... ({(recordingTime / 1000).toFixed(1)}s)
-            </span>
-          ) : uploadingClip ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              {uploadProgress || 'Uploading clip...'}
-            </span>
-          ) : loading || !isPlaying ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Starting stream...
-            </span>
-          ) : (
-            <span className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-neutral-900" />
-              {isMobile ? 'Hold to Brew' : 'Click to Start Brewing'}
-            </span>
-          )}
-        </Button>
-
-        {/* Controls */}
-        <div className="bg-neutral-950 rounded-3xl p-6 border border-neutral-800 space-y-4 shadow-inner">
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
-            <div className="flex items-center gap-2">
-              <Input
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your AI effect..."
-                className="bg-neutral-950 border-neutral-800 focus:border-neutral-600 focus:ring-0 text-neutral-100 placeholder:text-neutral-500"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => {
-                  const prompts = cameraType === 'front' ? FRONT_PROMPTS : BACK_PROMPTS;
-                  const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
-                  setPrompt(randomPrompt);
-                }}
-                className="bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 shrink-0"
-                title="Random prompt"
-              >
-                <RefreshCw className="h-4 w-4 text-neutral-300" />
-              </Button>
+      {/* Scrollable Controls Section */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+        <div className="max-w-md mx-auto space-y-3">
+          {/* Record Button */}
+          {!captureSupported && (
+            <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
+              ⚠️ Video capture not supported on this browser. Recording is disabled.
             </div>
-          </div>
+          )}
+          <Button
+            onClick={isMobile ? undefined : toggleRecording}
+            onPointerDown={isMobile ? startRecording : undefined}
+            onPointerUp={isMobile ? stopRecording : undefined}
+            onPointerLeave={isMobile ? stopRecording : undefined}
+            disabled={loading || uploadingClip || !playbackId || !captureSupported || !isPlaying}
+            className="w-full h-14 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {recording ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                Recording... ({(recordingTime / 1000).toFixed(1)}s)
+              </span>
+            ) : uploadingClip ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                {uploadProgress || 'Uploading clip...'}
+              </span>
+            ) : loading || !isPlaying ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Starting stream...
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-neutral-900" />
+                {isMobile ? 'Hold to Brew' : 'Click to Start Brewing'}
+              </span>
+            )}
+          </Button>
 
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">
-              Texture
-            </label>
-
-            <div className="flex items-center gap-4">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="flex items-center gap-2 bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 !w-16 !h-16 rounded-full overflow-hidden px-0 py-0 w-full sm:w-auto"
-                  >
-                    {selectedTexture ? (
-                      <>
-                        <img
-                          src={TEXTURES.find((t) => t.id === selectedTexture)?.url}
-                          alt="Selected texture"
-                          className="w-8 h-8 object-cover rounded"
-                        />
-
-                      </>
-                      ) : (
-                        <ImageOff className="w-5 h-5 text-neutral-400" />
-                      )}
-                  </Button>
-                </PopoverTrigger>
-
-                <PopoverContent
-                  align="start"
-                  sideOffset={8}
-                  className="w-[90vw] sm:w-80 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-4"
+          {/* Controls */}
+          <div className="bg-neutral-950 rounded-3xl p-5 border border-neutral-800 space-y-4 shadow-inner">
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Describe your AI effect..."
+                  className="bg-neutral-950 border-neutral-800 focus:border-neutral-600 focus:ring-0 text-neutral-100 placeholder:text-neutral-500"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    const prompts = cameraType === 'front' ? FRONT_PROMPTS : BACK_PROMPTS;
+                    const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
+                    setPrompt(randomPrompt);
+                  }}
+                  className="bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 shrink-0"
+                  title="Random prompt"
                 >
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  <RefreshCw className="h-4 w-4 text-neutral-300" />
+                </Button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Texture
+              </label>
+
+              <div className="flex items-center gap-4">
+                <Popover>
+                  <PopoverTrigger asChild>
                     <Button
-                      onClick={() => setSelectedTexture(null)}
-                      variant={selectedTexture === null ? "default" : "outline"}
-                      className={`aspect-square ${
-                        selectedTexture === null
-                          ? "bg-neutral-800 text-neutral-100"
-                          : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"
-                      }`}
+                      variant="outline"
+                      className="flex items-center gap-2 bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 !w-16 !h-16 rounded-full overflow-hidden px-0 py-0 w-full sm:w-auto"
                     >
-                      <ImageOff className="w-5 h-5 text-neutral-400" />
+                      {selectedTexture ? (
+                        <>
+                          <img
+                            src={TEXTURES.find((t) => t.id === selectedTexture)?.url}
+                            alt="Selected texture"
+                            className="w-8 h-8 object-cover rounded"
+                          />
+
+                        </>
+                        ) : (
+                          <ImageOff className="w-5 h-5 text-neutral-400" />
+                        )}
                     </Button>
-                    {TEXTURES.map((texture) => (
+                  </PopoverTrigger>
+
+                  <PopoverContent
+                    align="start"
+                    sideOffset={8}
+                    className="w-[90vw] sm:w-80 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-4"
+                  >
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       <Button
-                        key={texture.id}
-                        onClick={() => setSelectedTexture(texture.id)}
-                        variant={selectedTexture === texture.id ? "default" : "outline"}
-                        className={`aspect-square p-0 overflow-hidden ${
-                          selectedTexture === texture.id
-                            ? "ring-2 ring-neutral-400"
-                            : "border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850"
+                        onClick={() => setSelectedTexture(null)}
+                        variant={selectedTexture === null ? "default" : "outline"}
+                        className={`aspect-square ${
+                          selectedTexture === null
+                            ? "bg-neutral-800 text-neutral-100"
+                            : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"
                         }`}
                       >
-                        <img
-                          src={texture.url}
-                          alt={texture.name}
-                          className="w-full h-full object-cover rounded-lg"
-                        />
+                        <ImageOff className="w-5 h-5 text-neutral-400" />
                       </Button>
-                    ))}
+                      {TEXTURES.map((texture) => (
+                        <Button
+                          key={texture.id}
+                          onClick={() => setSelectedTexture(texture.id)}
+                          variant={selectedTexture === texture.id ? "default" : "outline"}
+                          className={`aspect-square p-0 overflow-hidden ${
+                            selectedTexture === texture.id
+                              ? "ring-2 ring-neutral-400"
+                              : "border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850"
+                          }`}
+                        >
+                          <img
+                            src={texture.url}
+                            alt={texture.name}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                        </Button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                {selectedTexture && (
+                  <div className="flex-1">
+                    <label className="text-sm font-medium block mb-1 text-neutral-300">
+                      Strength: {textureWeight[0].toFixed(2)}
+                    </label>
+                    <Slider
+                      value={textureWeight}
+                      onValueChange={setTextureWeight}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      className="w-full accent-neutral-400"
+                    />
                   </div>
-                </PopoverContent>
-              </Popover>
-
-              {selectedTexture && (
-                <div className="flex-1">
-                  <label className="text-sm font-medium block mb-1 text-neutral-300">
-                    Strength: {textureWeight[0].toFixed(2)}
-                  </label>
-                  <Slider
-                    value={textureWeight}
-                    onValueChange={setTextureWeight}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    className="w-full accent-neutral-400"
-                  />
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
 
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">
-              Creativity: {creativity[0].toFixed(1)}
-            </label>
-            <Slider
-              value={creativity}
-              onValueChange={setCreativity}
-              min={1}
-              max={10}
-              step={0.1}
-              className="w-full accent-neutral-400"
-            />
-          </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Creativity: {creativity[0].toFixed(1)}
+              </label>
+              <Slider
+                value={creativity}
+                onValueChange={setCreativity}
+                min={1}
+                max={10}
+                step={0.1}
+                className="w-full accent-neutral-400"
+              />
+            </div>
 
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">
-              Quality: {quality[0].toFixed(2)}
-            </label>
-            <Slider
-              value={quality}
-              onValueChange={setQuality}
-              min={0}
-              max={1}
-              step={0.01}
-              className="w-full accent-neutral-400"
-            />
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Quality: {quality[0].toFixed(2)}
+              </label>
+              <Slider
+                value={quality}
+                onValueChange={setQuality}
+                min={0}
+                max={1}
+                step={0.01}
+                className="w-full accent-neutral-400"
+              />
+            </div>
           </div>
         </div>
       </div>
