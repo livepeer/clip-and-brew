@@ -39,16 +39,28 @@ export interface StreamDiffusionParams {
 
 /**
  * Create a new Daydream stream with the StreamDiffusion pipeline
+ * If initialParams provided, immediately updates the stream with those params
  */
-export async function createDaydreamStream(): Promise<DaydreamStream> {
+export async function createDaydreamStream(initialParams?: StreamDiffusionParams): Promise<DaydreamStream> {
+  // Step 1: Create stream (only accepts pipeline_id)
   const { data, error } = await supabase.functions.invoke('daydream-stream', {
-    body: { pipeline_id: 'pip_SDXL-turbo' }
+    body: { 
+      pipeline_id: 'pip_SDXL-turbo' // Correct SDXL pipeline ID
+    }
   });
 
   if (error) throw error;
   if (!data) throw new Error('No stream data returned');
 
-  return data as DaydreamStream;
+  const stream = data as DaydreamStream;
+
+  // Step 2: Immediately update with initial params if provided
+  // This prevents the stream from starting with Daydream defaults
+  if (initialParams) {
+    await updateDaydreamPrompts(stream.id, initialParams);
+  }
+
+  return stream;
 }
 
 /**
@@ -161,19 +173,27 @@ export async function updateDaydreamPrompts(
     ...cn,
   }));
 
+  // CRITICAL: Always include model_id to prevent Daydream from loading default
+  // Also always specify ip_adapter even if disabled (API requirement)
   const body = {
     model_id: 'streamdiffusion',
     pipeline: 'live-video-to-video',
     params: {
-      model_id: params.model_id || 'stabilityai/sdxl-turbo',
+      model_id: params.model_id || 'stabilityai/sdxl-turbo', // ALWAYS include
       prompt: params.prompt,
-      negative_prompt: params.negative_prompt || 'blurry, low quality, flat, 2d',
+      negative_prompt: params.negative_prompt || 'blurry, low quality, flat, 2d, distorted',
       num_inference_steps: params.num_inference_steps || 50,
       seed: params.seed || 42,
       t_index_list: params.t_index_list || [6, 12, 18],
       controlnets: mergedControlnets,
-      // Pass through IP-Adapter configuration if provided
-      ...(params.ip_adapter ? { ip_adapter: params.ip_adapter } : {}),
+      // ALWAYS specify IP-Adapter (even if disabled)
+      ip_adapter: params.ip_adapter || {
+        enabled: false,
+        type: 'regular',
+        scale: 0,
+        weight_type: 'linear',
+        insightface_model_name: 'buffalo_l',
+      },
       ...(params.ip_adapter_style_image_url
         ? { ip_adapter_style_image_url: params.ip_adapter_style_image_url }
         : {}),

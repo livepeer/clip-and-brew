@@ -405,21 +405,10 @@ const clip = await saveClipToDatabase({ assetId, playbackId, ... });
 ```
 
 **Key implementation notes**:
-- `captureStream()` must be called on the actual `<video>` DOM element (not iframe)
-- Front camera mirroring: Canvas-based stream manipulation before sending to Daydream
-  ```typescript
-  // Mirror at source (in startWebRTCPublish)
-  const mirrorStream = (originalStream: MediaStream): MediaStream => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d')!;
-    ctx.scale(-1, 1); // Mirror horizontally
-    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-    return canvas.captureStream(30); // + audio tracks
-  };
-  ```
-- Recording is of AI-processed output, not original camera feed
-- WebM format with 100ms timeslice for smooth capture
-- Maximum 2-minute polling for asset processing
+- `captureStream()` must be called on actual `<video>` DOM element (not iframe)
+- Front camera mirroring: Canvas-based stream manipulation before sending to Daydream (mirrors at source, not CSS)
+- Recording captures AI-processed output, not original camera feed
+- WebM format with 100ms timeslice, max 2min polling for asset processing
 
 ## 🎯 Key Business Logic
 
@@ -659,6 +648,37 @@ verify_jwt = false
 
 **Status**: Resolved by peer. May require specific CSS targeting of Livepeer Player internal elements.
 
+### Params Updating Logic Bugs (✅ RESOLVED)
+**Issues**: Multiple bugs in stream initialization and parameter updates:
+1. Stream always started with default psychedelic effect (not the prompt from camera selection)
+2. Sometimes showed loading state as if model_id changed (Daydream trying to load sdturbo default)
+3. Pipeline running on non-SDXL nodes (wrong pipeline_id)
+
+**Root Causes**:
+- `POST /v1/streams` API only accepts `pipeline_id` (no other params allowed)
+- No initial prompt update was being sent after stream creation
+- Pipeline ID was incorrect: using edge function default `pip_qpUgXycjWF6YMeSL` instead of correct `pip_SDXL-turbo`
+- If `model_id` omitted from any param update, Daydream tries to reload default model
+- `ip_adapter` must always be specified (even if disabled) per Daydream API requirements
+
+**Solutions** (`src/lib/daydream.ts` + `src/pages/Capture.tsx`):
+1. Fixed pipeline_id to `'pip_SDXL-turbo'` (correct SDXL pipeline)
+2. Modified `createDaydreamStream()` to accept `initialParams` 
+3. After creating stream, immediately call `updateDaydreamPrompts()` with initial params:
+   - `model_id`: Always set to `'stabilityai/sdxl-turbo'`
+   - `prompt`: Use selected random prompt based on camera type
+   - `t_index_list`: Calculate from initial creativity/quality values
+   - `controlnets`: Specify all SDXL controlnets with conditioning scales
+   - `ip_adapter`: Always include even when disabled (set `enabled: false`)
+4. Added critical comments to always include `model_id` in param updates
+5. Ensured `ip_adapter` always specified in updates (even if disabled)
+
+**Impact**: 
+- Pipeline now runs on correct SDXL nodes
+- Stream starts immediately with correct prompt/effect
+- No more loading/model reload issues during param updates
+- Consistent behavior across all parameter changes
+
 ## 📝 Coding Conventions
 
 ### TypeScript
@@ -824,13 +844,18 @@ Avoid:
 
 ---
 
-**Last Updated**: 2025-10-10
+**Last Updated**: 2025-10-11
+- Fixed critical params updating logic bugs: stream now starts with correct prompt (via immediate post-creation prompt update) and no model reload issues
 - Canvas-based mirroring at source for natural selfie mode
 - Interactive ticket redemption with swipe-to-validate UX
 - Fixed ICE gathering delay (40s → 2s) with STUN redundancy + timeout
 - Fixed missing edge function configs causing 404 errors
 - Fixed React hook dependency issues in auto-start flow
 - Expanded default prompts: 14 front camera (portraits) + 15 back camera (scenes) with trippy/artistic styles
+- **Privacy fix**: Auto-stop camera/audio streams when user leaves tab (Page Visibility API)
+  - Streams stop immediately when tab hidden (safest for privacy)
+  - Auto-restart if user returns after >5s (shows loading state)
+  - If <5s away, no auto-restart (user must manually restart)
 **Project Status**: Active development for Livepeer × Daydream Summit (Brewdream)
 **Maintainer Note**: Keep this file concise but comprehensive. Every section should answer "what do I need to know to work on this?" Always check PRD for feature requirements before implementing.
 

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { ArrowLeft, Camera, ImageOff, Loader2, Sparkles, RefreshCw, Mic, MicOff } from 'lucide-react';
+import { Camera, ImageOff, Loader2, Sparkles, RefreshCw, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -183,6 +183,8 @@ export default function Capture() {
   const originalStreamRef = useRef<MediaStream | null>(null);
   const silentAudioTrackRef = useRef<MediaStreamTrack | null>(null);
   const realAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const tabHiddenTimeRef = useRef<number | null>(null);
+  const wasStreamActiveRef = useRef<boolean>(false);
 
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -199,11 +201,96 @@ export default function Capture() {
     }
   };
 
-  const initializeStream = useCallback(async (type: 'front' | 'back') => {
+  /**
+   * Stop all media streams and clean up resources
+   */
+  const stopAllMediaStreams = useCallback(() => {
+    console.log('Stopping all media streams...');
+    
+    // Stop all tracks in the original stream
+    if (originalStreamRef.current) {
+      originalStreamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('Stopped track:', track.kind, track.id);
+      });
+      originalStreamRef.current = null;
+    }
+
+    // Stop audio tracks
+    if (realAudioTrackRef.current) {
+      realAudioTrackRef.current.stop();
+      realAudioTrackRef.current = null;
+    }
+    if (silentAudioTrackRef.current) {
+      silentAudioTrackRef.current.stop();
+      silentAudioTrackRef.current = null;
+    }
+
+    // Close WebRTC peer connection
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
+    // Stop the PiP video
+    if (sourceVideoRef.current && sourceVideoRef.current.srcObject) {
+      const stream = sourceVideoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      sourceVideoRef.current.srcObject = null;
+    }
+
+    console.log('All media streams stopped');
+  }, []);
+
+  const initializeStream = useCallback(async (type: 'front' | 'back', initialPrompt: string) => {
     setLoading(true);
     try {
-      // Create Daydream stream
-      const streamData = await createDaydreamStream();
+      // Calculate initial t_index_list based on default creativity and quality
+      const initialTIndexList = calculateTIndexList(creativity[0], quality[0]);
+      
+      // Create Daydream stream with initial params to avoid default psychedelic
+      const initialParams: StreamDiffusionParams = {
+        model_id: 'stabilityai/sdxl-turbo',
+        prompt: initialPrompt,
+        negative_prompt: 'blurry, low quality, flat, 2d, distorted',
+        t_index_list: initialTIndexList,
+        seed: 42,
+        num_inference_steps: 50,
+        // Specify controlnets with disabled state
+        controlnets: [
+          {
+            enabled: true,
+            model_id: 'xinsir/controlnet-depth-sdxl-1.0',
+            preprocessor: 'depth_tensorrt',
+            preprocessor_params: {},
+            conditioning_scale: 0.3,
+          },
+          {
+            enabled: true,
+            model_id: 'xinsir/controlnet-canny-sdxl-1.0',
+            preprocessor: 'canny',
+            preprocessor_params: {},
+            conditioning_scale: 0,
+          },
+          {
+            enabled: true,
+            model_id: 'xinsir/controlnet-tile-sdxl-1.0',
+            preprocessor: 'feedback',
+            preprocessor_params: {},
+            conditioning_scale: 0,
+          },
+        ],
+        // IP-Adapter disabled by default
+        ip_adapter: {
+          enabled: false,
+          type: 'regular',
+          scale: 0,
+          weight_type: 'linear',
+          insightface_model_name: 'buffalo_l',
+        },
+      };
+      
+      const streamData = await createDaydreamStream(initialParams);
 
       setStreamId(streamData.id);
       setPlaybackId(streamData.output_playback_id);
@@ -242,7 +329,7 @@ export default function Capture() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // startWebRTCPublish is stable (doesn't depend on props/state)
+  }, [toast, creativity, quality]); // creativity and quality used in calculateTIndexList for initial params
 
   const selectCamera = useCallback(async (type: 'front' | 'back') => {
     setCameraType(type);
@@ -251,8 +338,9 @@ export default function Capture() {
       : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
     setPrompt(randomPrompt);
 
-    await initializeStream(type);
-  }, [initializeStream]);
+    // Pass the initial prompt to initializeStream
+    await initializeStream(type, randomPrompt);
+  }, [initializeStream, creativity, quality]);
 
   // Auto-start camera on desktop (non-mobile devices)
   useEffect(() => {
@@ -479,8 +567,9 @@ export default function Capture() {
         : null;
 
       // Build params for StreamDiffusion
+      // CRITICAL: Always include model_id to prevent loading default
       const params: StreamDiffusionParams = {
-        model_id: 'stabilityai/sdxl-turbo',
+        model_id: 'stabilityai/sdxl-turbo', // ALWAYS include to prevent model reload
         prompt,
         negative_prompt: 'blurry, low quality, flat, 2d, distorted',
         t_index_list: tIndexList,
@@ -859,20 +948,57 @@ export default function Capture() {
   // Cleanup audio tracks on unmount
   useEffect(() => {
     return () => {
-      if (realAudioTrackRef.current) {
-        realAudioTrackRef.current.stop();
-        realAudioTrackRef.current = null;
-      }
-      if (silentAudioTrackRef.current) {
-        silentAudioTrackRef.current.stop();
-        silentAudioTrackRef.current = null;
-      }
-      if (originalStreamRef.current) {
-        originalStreamRef.current.getTracks().forEach(track => track.stop());
-        originalStreamRef.current = null;
+      stopAllMediaStreams();
+    };
+  }, [stopAllMediaStreams]);
+
+  // Handle tab visibility changes - stop streams when user leaves tab
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // User left the tab - record the time and stop streams immediately
+        console.log('Tab hidden - stopping media streams for privacy');
+        tabHiddenTimeRef.current = Date.now();
+        wasStreamActiveRef.current = !!playbackId; // Remember if we had an active stream
+        
+        // Stop all media streams immediately for privacy/safety
+        stopAllMediaStreams();
+        
+        // Clear the playback and stream state to show loading when they return
+        setPlaybackId(null);
+        setStreamId(null);
+        setWhipUrl(null);
+        setIsPlaying(false);
+      } else {
+        // User returned to the tab
+        if (tabHiddenTimeRef.current && wasStreamActiveRef.current) {
+          const timeAway = Date.now() - tabHiddenTimeRef.current;
+          console.log(`Tab visible again after ${timeAway}ms away`);
+          
+          // If user was gone for more than 5 seconds, restart the stream
+          if (timeAway > 5000 && cameraType) {
+            console.log('User was away >5s, restarting stream...');
+            toast({
+              title: 'Restarting stream',
+              description: 'Reconnecting your camera...',
+            });
+            // Restart the stream with the same camera type and current prompt
+            initializeStream(cameraType, prompt);
+          }
+          
+          // Reset the tracking variables
+          tabHiddenTimeRef.current = null;
+          wasStreamActiveRef.current = false;
+        }
       }
     };
-  }, []);
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [cameraType, playbackId, prompt, stopAllMediaStreams, initializeStream, toast]);
 
   // Show reassuring message if stream takes longer than 10s to load
   useEffect(() => {
@@ -970,15 +1096,10 @@ export default function Capture() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200 p-4">
-      <div className="max-w-2xl mx-auto space-y-4">
-        {/* Main Video Output */}
-
-        <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="mb-6">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back
-        </Button>
-        <div className="relative aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
+    <div className="fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200">
+      {/* Fixed Video Section - Square but smaller, starts from top */}
+      <div className="flex-shrink-0 px-4 pt-4 pb-3 bg-neutral-950">
+        <div className="relative w-full max-w-md mx-auto aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
           {playbackId && src ? (
             <div
               ref={playerContainerRef}
@@ -1028,13 +1149,13 @@ export default function Capture() {
           )}
 
           {/* Microphone Toggle Button */}
-          <div className="absolute bottom-4 left-4">
+          <div className="absolute bottom-3 left-3">
             <Button
               onClick={toggleMicrophone}
               disabled={loading || !playbackId}
               size="icon"
               variant={micEnabled ? "default" : "secondary"}
-              className={`w-14 h-14 rounded-full shadow-lg transition-all duration-200 ${
+              className={`w-12 h-12 rounded-full shadow-lg transition-all duration-200 ${
                 micEnabled 
                   ? 'bg-green-600 hover:bg-green-700 text-white' 
                   : micPermissionDenied 
@@ -1044,15 +1165,15 @@ export default function Capture() {
               title={micEnabled ? 'Disable microphone' : micPermissionDenied ? 'Microphone access denied' : 'Enable microphone'}
             >
               {micEnabled ? (
-                <Mic className="w-6 h-6" />
+                <Mic className="w-5 h-5" />
               ) : (
-                <MicOff className="w-6 h-6" />
+                <MicOff className="w-5 h-5" />
               )}
             </Button>
           </div>
 
           {/* PiP Source Preview */}
-          <div className="absolute bottom-4 right-4 w-24 h-24 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
+          <div className="absolute bottom-3 right-3 w-20 h-20 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
             <video
               ref={sourceVideoRef}
               autoPlay
@@ -1062,155 +1183,159 @@ export default function Capture() {
             />
           </div>
         </div>
+      </div>
 
-        {/* Record Button */}
-        {!captureSupported && (
-          <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
-            ⚠️ Video capture not supported on this browser. Recording is disabled.
-          </div>
-        )}
-        <Button
-          onClick={isMobile ? undefined : toggleRecording}
-          onPointerDown={isMobile ? startRecording : undefined}
-          onPointerUp={isMobile ? stopRecording : undefined}
-          onPointerLeave={isMobile ? stopRecording : undefined}
-          disabled={loading || uploadingClip || !playbackId || !captureSupported || !isPlaying}
-          className="w-full h-16 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {recording ? (
-            <span className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              Recording... ({(recordingTime / 1000).toFixed(1)}s)
-            </span>
-          ) : uploadingClip ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              {uploadProgress || 'Uploading clip...'}
-            </span>
-          ) : loading || !isPlaying ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              Starting stream...
-            </span>
-          ) : (
-            <span className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-neutral-900" />
-              {isMobile ? 'Hold to Brew' : 'Click to Start Brewing'}
-            </span>
-          )}
-        </Button>
-
-        {/* Controls */}
-        <div className="bg-neutral-950 rounded-3xl p-6 border border-neutral-800 space-y-4 shadow-inner">
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
-            <div className="flex items-center gap-2">
-              <Input
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your AI effect..."
-                className="bg-neutral-950 border-neutral-800 focus:border-neutral-600 focus:ring-0 text-neutral-100 placeholder:text-neutral-500"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => {
-                  const prompts = cameraType === 'front' ? FRONT_PROMPTS : BACK_PROMPTS;
-                  const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
-                  setPrompt(randomPrompt);
-                }}
-                className="bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 shrink-0"
-                title="Random prompt"
-              >
-                <RefreshCw className="h-4 w-4 text-neutral-300" />
-              </Button>
+      {/* Scrollable Controls Section */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+        <div className="max-w-md mx-auto space-y-3">
+          {/* Record Button */}
+          {!captureSupported && (
+            <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
+              ⚠️ Video capture not supported on this browser. Recording is disabled.
             </div>
-          </div>
+          )}
+          <Button
+            onClick={isMobile ? undefined : toggleRecording}
+            onPointerDown={isMobile ? startRecording : undefined}
+            onPointerUp={isMobile ? stopRecording : undefined}
+            onPointerLeave={isMobile ? stopRecording : undefined}
+            disabled={loading || uploadingClip || !playbackId || !captureSupported || !isPlaying}
+            className="w-full h-14 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {recording ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                Recording... ({(recordingTime / 1000).toFixed(1)}s)
+              </span>
+            ) : uploadingClip ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                {uploadProgress || 'Uploading clip...'}
+              </span>
+            ) : loading || !isPlaying ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Starting stream...
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-neutral-900" />
+                {isMobile ? 'Hold to Brew' : 'Click to Start Brewing'}
+              </span>
+            )}
+          </Button>
 
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">
-              Texture
-            </label>
-
-            <div className="flex items-center gap-4">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="flex items-center gap-2 bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 !w-16 !h-16 rounded-full overflow-hidden px-0 py-0 w-full sm:w-auto"
-                  >
-                    {selectedTexture ? (
-                      <>
-                        <img
-                          src={TEXTURES.find((t) => t.id === selectedTexture)?.url}
-                          alt="Selected texture"
-                          className="w-8 h-8 object-cover rounded"
-                        />
-
-                      </>
-                      ) : (
-                        <ImageOff className="w-5 h-5 text-neutral-400" />
-                      )}
-                  </Button>
-                </PopoverTrigger>
-
-                <PopoverContent
-                  align="start"
-                  sideOffset={8}
-                  className="w-[90vw] sm:w-80 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-4"
+          {/* Controls */}
+          <div className="bg-neutral-950 rounded-3xl p-5 border border-neutral-800 space-y-4 shadow-inner">
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Describe your AI effect..."
+                  className="bg-neutral-950 border-neutral-800 focus:border-neutral-600 focus:ring-0 text-neutral-100 placeholder:text-neutral-500"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    const prompts = cameraType === 'front' ? FRONT_PROMPTS : BACK_PROMPTS;
+                    const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
+                    setPrompt(randomPrompt);
+                  }}
+                  className="bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 shrink-0"
+                  title="Random prompt"
                 >
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  <RefreshCw className="h-4 w-4 text-neutral-300" />
+                </Button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Texture
+              </label>
+
+              <div className="flex items-center gap-4">
+                <Popover>
+                  <PopoverTrigger asChild>
                     <Button
-                      onClick={() => setSelectedTexture(null)}
-                      variant={selectedTexture === null ? "default" : "outline"}
-                      className={`aspect-square ${
-                        selectedTexture === null
-                          ? "bg-neutral-800 text-neutral-100"
-                          : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"
-                      }`}
+                      variant="outline"
+                      className="flex items-center gap-2 bg-neutral-950 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 !w-16 !h-16 rounded-full overflow-hidden px-0 py-0 w-full sm:w-auto"
                     >
-                      <ImageOff className="w-5 h-5 text-neutral-400" />
+                      {selectedTexture ? (
+                        <>
+                          <img
+                            src={TEXTURES.find((t) => t.id === selectedTexture)?.url}
+                            alt="Selected texture"
+                            className="w-8 h-8 object-cover rounded"
+                          />
+
+                        </>
+                        ) : (
+                          <ImageOff className="w-5 h-5 text-neutral-400" />
+                        )}
                     </Button>
-                    {TEXTURES.map((texture) => (
+                  </PopoverTrigger>
+
+                  <PopoverContent
+                    align="start"
+                    sideOffset={8}
+                    className="w-[90vw] sm:w-80 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-4"
+                  >
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       <Button
-                        key={texture.id}
-                        onClick={() => setSelectedTexture(texture.id)}
-                        variant={selectedTexture === texture.id ? "default" : "outline"}
-                        className={`aspect-square p-0 overflow-hidden ${
-                          selectedTexture === texture.id
-                            ? "ring-2 ring-neutral-400"
-                            : "border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850"
+                        onClick={() => setSelectedTexture(null)}
+                        variant={selectedTexture === null ? "default" : "outline"}
+                        className={`aspect-square ${
+                          selectedTexture === null
+                            ? "bg-neutral-800 text-neutral-100"
+                            : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"
                         }`}
                       >
-                        <img
-                          src={texture.url}
-                          alt={texture.name}
-                          className="w-full h-full object-cover rounded-lg"
-                        />
+                        <ImageOff className="w-5 h-5 text-neutral-400" />
                       </Button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                      {TEXTURES.map((texture) => (
+                        <Button
+                          key={texture.id}
+                          onClick={() => setSelectedTexture(texture.id)}
+                          variant={selectedTexture === texture.id ? "default" : "outline"}
+                          className={`aspect-square p-0 overflow-hidden ${
+                            selectedTexture === texture.id
+                              ? "ring-2 ring-neutral-400"
+                              : "border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850"
+                          }`}
+                        >
+                          <img
+                            src={texture.url}
+                            alt={texture.name}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                        </Button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
-              {selectedTexture && (
-                <div className="flex-1">
-                  <label className="text-sm font-medium block mb-1 text-neutral-300">
-                    Strength: {textureWeight[0].toFixed(2)}
-                  </label>
-                  <Slider
-                    value={textureWeight}
-                    onValueChange={setTextureWeight}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    className="w-full accent-neutral-400"
-                  />
-                </div>
-              )}
+                {selectedTexture && (
+                  <div className="flex-1">
+                    <label className="text-sm font-medium block mb-1 text-neutral-300">
+                      Strength: {textureWeight[0].toFixed(2)}
+                    </label>
+                    <Slider
+                      value={textureWeight}
+                      onValueChange={setTextureWeight}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      className="w-full accent-neutral-400"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
           <div>
             <label className="text-sm font-medium mb-2 block text-neutral-300">
@@ -1230,18 +1355,19 @@ export default function Capture() {
             </div>
           </div>
 
-          <div>
-            <label className="text-sm font-medium mb-2 block text-neutral-300">
-              Quality: {quality[0].toFixed(2)}
-            </label>
-            <Slider
-              value={quality}
-              onValueChange={setQuality}
-              min={0}
-              max={1}
-              step={0.01}
-              className="w-full accent-neutral-400"
-            />
+            <div>
+              <label className="text-sm font-medium mb-2 block text-neutral-300">
+                Quality: {quality[0].toFixed(2)}
+              </label>
+              <Slider
+                value={quality}
+                onValueChange={setQuality}
+                min={0}
+                max={1}
+                step={0.01}
+                className="w-full accent-neutral-400"
+              />
+            </div>
           </div>
         </div>
       </div>
