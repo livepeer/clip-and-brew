@@ -534,30 +534,67 @@ export default function Capture() {
   }, [streamId, prompt, intensity, quality, selectedTexture, textureWeight]);
 
   const calculateTIndexList = (intensityVal: number, qualityVal: number): number[] => {
-    // Target t_index values for extreme intensities (at full quality)
+    // Target t_index values for extreme intensities (at quality range boundaries)
     const lowIntensityTarget = [30, 35, 40, 45];  // intensity=1 (chill/refined)
     const highIntensityTarget = [6, 12, 18, 24];  // intensity=10 (psychedelic/stylized)
 
-    // Determine number of diffusion steps based on quality
+    // Determine number of steps and quality interpolation progress within range
     let numSteps: number;
+    let qualityProgress: number;
+    
     if (qualityVal < 0.25) {
       numSteps = 1;
+      qualityProgress = qualityVal / 0.25;
     } else if (qualityVal < 0.50) {
       numSteps = 2;
+      qualityProgress = (qualityVal - 0.25) / 0.25;
     } else if (qualityVal < 0.75) {
       numSteps = 3;
+      qualityProgress = (qualityVal - 0.50) / 0.25;
     } else {
       numSteps = 4;
+      qualityProgress = (qualityVal - 0.75) / 0.25;
     }
+    
+    // Clamp quality progress to [0, 1]
+    qualityProgress = Math.max(0, Math.min(1, qualityProgress));
 
-    // Linear interpolation between low and high intensity targets
-    // intensity=1 uses lowIntensityTarget, intensity=10 uses highIntensityTarget
-    const result: number[] = [];
+    // Step 1: Intensity interpolation to get base values at start of quality range
+    const baseValues: number[] = [];
     for (let i = 0; i < numSteps; i++) {
       const value = highIntensityTarget[i] + 
                     (lowIntensityTarget[i] - highIntensityTarget[i]) * 
                     (10 - intensityVal) / 9;
-      result.push(Math.max(0, Math.min(50, Math.round(value))));
+      baseValues.push(value);
+    }
+
+    // Step 2: Quality interpolation - each value interpolates toward next
+    const result: number[] = [];
+    for (let i = 0; i < numSteps; i++) {
+      const currentVal = baseValues[i];
+      
+      // Determine target value for interpolation
+      let nextVal: number;
+      if (i < numSteps - 1) {
+        // Interpolate toward next index value
+        nextVal = baseValues[i + 1];
+      } else {
+        // Last index: extrapolate using diff from previous step
+        if (i > 0) {
+          const diff = baseValues[i] - baseValues[i - 1];
+          nextVal = baseValues[i] + diff;
+        } else {
+          // Single step: interpolate toward next intensity target value
+          const nextIntensityVal = highIntensityTarget[i + 1] + 
+                                   (lowIntensityTarget[i + 1] - highIntensityTarget[i + 1]) * 
+                                   (10 - intensityVal) / 9;
+          nextVal = nextIntensityVal;
+        }
+      }
+      
+      // Interpolate based on quality progress within range
+      const interpolated = currentVal + (nextVal - currentVal) * qualityProgress;
+      result.push(Math.max(0, Math.min(50, Math.round(interpolated))));
     }
 
     return result;

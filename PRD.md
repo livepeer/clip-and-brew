@@ -70,28 +70,43 @@ Mobile-first microsite for the **Realtime AI Video Summit (Open Source AI Week)*
     - Always have Ipadapters enabled in the params. You will only change the scale which should be 0 when disabled.
     - If a texture is selected, there also a 0-1 scale slider
 - **Intensity / Quality → `t_index_list` (SDXL diffusion timestep control)**
-    - **Quality** `∈ [0..1]` determines the **number of diffusion steps**:
-        - `quality < 0.25` → 1 step: use first value only
-        - `quality < 0.50` → 2 steps: use first two values
-        - `quality < 0.75` → 3 steps: use first three values
-        - `quality ≥ 0.75` → 4 steps: use all four values (best quality)
-        - Defaults to 0.4 (2 steps)
-    - **Intensity** `∈ [1..10]` controls stylization via **linear interpolation** between target t_index values:
-        - **Low intensity (1)** = Chill/Refined: Target values `[30, 35, 40, 45]`
-        - **High intensity (10)** = Psychedelic/Stylized: Target values `[6, 12, 18, 24]`
-        - **Formula**: For each step `i`, interpolate: `t_index[i] = high_target[i] + (low_target[i] - high_target[i]) * (10 - intensity) / 9`
-        - Defaults to 5 (balanced)
-    - **Final t_index_list**: Round interpolated values, clamp to `[0..50]`, take first `numSteps` based on quality
+    - **Two-stage interpolation**: First intensity, then quality
+    
+    - **Stage 1 - Intensity** `∈ [1..10]` determines base stylization:
+        - **Intensity 1** (chill): Base targets `[30, 35, 40, 45]` - refined/realistic
+        - **Intensity 10** (psychedelic): Base targets `[6, 12, 18, 24]` - heavily stylized
+        - Linear interpolation: `base[i] = high[i] + (low[i] - high[i]) * (10 - intensity) / 9`
+        - Defaults to 5 (balanced: `[19, 25, 30, 36]` at quality range boundaries)
+    
+    - **Stage 2 - Quality** `∈ [0..1]` determines steps AND refines values:
+        - **Step count** (number of t_index values):
+            - `quality < 0.25` → 1 step
+            - `quality < 0.50` → 2 steps
+            - `quality < 0.75` → 3 steps
+            - `quality ≥ 0.75` → 4 steps
+        - **Within each range**, quality interpolates each value toward the next:
+            - At range start (0.25, 0.50, 0.75): Use base values from intensity
+            - As quality increases: Each index value moves toward next index value
+            - Last index: Extrapolates by extending with same spacing
+        - Defaults to 0.4 (2 steps, mid-range interpolation)
+    
+    - **Simple explanation**: 
+        - Quality slider does TWO things: (1) adds more steps at thresholds, (2) smoothly shifts values upward between thresholds
+        - Higher quality = more computation AND more refinement (values shift toward higher t_index)
+    
     - **Examples**:
-        - Intensity 1, Quality 0.8 (4 steps): `[30, 35, 40, 45]` - very refined, minimal stylization
-        - Intensity 5, Quality 0.8 (4 steps): `[19, 25, 30, 36]` - balanced
-        - Intensity 10, Quality 0.8 (4 steps): `[6, 12, 18, 24]` - maximum stylization
-        - Intensity 1, Quality 0.4 (2 steps): `[30, 35]` - refined with fewer steps
+        - Intensity 10, Quality 0.25: `[6, 12]` - base psychedelic, 2 steps
+        - Intensity 10, Quality 0.50: `[6, 12, 18]` - add 3rd step
+        - Intensity 10, Quality 0.75: `[6, 12, 18, 24]` - add 4th step
+        - Intensity 10, Quality 1.0: `[12, 18, 24, 30]` - all values shifted up (more refined)
+        - Intensity 1, Quality 0.75: `[30, 35, 40, 45]` - base chill, 4 steps
+        - Intensity 1, Quality 1.0: `[35, 40, 45, 50]` - values shifted up (maximum refinement)
+    
     - **Rationale**: 
-        - Higher t_index values (later in diffusion) bias toward refinement and realism
-        - Lower t_index values (earlier in diffusion) increase AI stylization and psychedelic effects
-        - Linear interpolation provides smooth, predictable transitions across the intensity range
-        - Quality independently controls computational cost vs visual fidelity
+        - Higher t_index values (later diffusion timesteps) = more refinement, less AI stylization
+        - Lower t_index values (earlier timesteps) = more AI effects, more psychedelic
+        - Quality's dual role: computational cost (steps) + visual refinement (value shifting)
+        - Smooth, continuous control over the full intensity×quality space
 - **Other**: keep ControlNets enabled with **conditioning_scale** (use 0 to “disable”), never flip `enabled` (avoids reload). (Matches template guidance.). Keep default set to start with, hard coded, but should be easy to change.
 - The created clips should also register the exact params that were used during the recording (both high-level app inputs and generated stream params from them)
 

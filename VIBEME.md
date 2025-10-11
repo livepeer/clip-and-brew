@@ -132,8 +132,8 @@ These are **non-negotiable** technical requirements:
    - **Prompt**: Text description of style
    - **Texture**: Optional image overlay (8 presets)
    - **Intensity** (1-10): Controls stylization strength via `t_index_list` (coffee-themed: 1=mild/chill, 10=strong/psychedelic)
-   - **Quality** (0-1): Number of diffusion steps (0.25=1 step, 1.0=4 steps)
-   - **t_index_list**: Linear interpolation between `[30, 35, 40, 45]` (intensity=1) and `[6, 12, 18, 24]` (intensity=10)
+   - **Quality** (0-1): Two-stage control - (1) number of steps at thresholds, (2) continuous value interpolation within ranges
+   - **t_index_list**: Two-stage interpolation - intensity sets base values, quality shifts them toward higher indices
 
 5. **Clip Recording** (recording.ts + Capture.tsx):
    - **Button behavior**: Desktop (click toggle), Mobile (press & hold)
@@ -424,37 +424,55 @@ const clip = await saveClipToDatabase({ assetId, playbackId, ... });
 ## 🎯 Key Business Logic
 
 ### T-Index Calculation (Intensity/Quality)
-**Linear interpolation for smooth chill-to-psychedelic spectrum**
+**Two-stage interpolation: Intensity → Quality**
 
 ```typescript
-// Quality [0..1] determines number of diffusion steps (defaults to 0.4)
-quality < 0.25 → 1 step   (use first value only)
-quality < 0.50 → 2 steps  (use first two values)
-quality < 0.75 → 3 steps  (use first three values)
-quality ≥ 0.75 → 4 steps  (use all four values, best quality)
+// STAGE 1: Intensity interpolation (base values at quality range boundaries)
+// Intensity [1..10] determines stylization level (defaults to 5)
+low_intensity_target = [30, 35, 40, 45]   // intensity=1 (chill/refined)
+high_intensity_target = [6, 12, 18, 24]   // intensity=10 (psychedelic)
+base[i] = high[i] + (low[i] - high[i]) * (10 - intensity) / 9
 
-// Intensity [1..10] via linear interpolation (defaults to 5) - Coffee-themed naming
-// Target values:
-//   Low intensity (1):   [30, 35, 40, 45] - chill/refined (higher t_index = later diffusion = more realistic)
-//   High intensity (10): [6, 12, 18, 24]  - psychedelic/stylized (lower t_index = earlier diffusion = more effects)
+// STAGE 2: Quality interpolation (step count + value shifting)
+// Quality [0..1] has dual role (defaults to 0.4):
 
-// Formula: For each step i:
-t_index[i] = high_target[i] + (low_target[i] - high_target[i]) * (10 - intensity) / 9
-// Then round, clamp to [0..50], and take first numSteps based on quality
+// (A) Step count at thresholds:
+quality < 0.25 → 1 step   (first value only)
+quality < 0.50 → 2 steps  (first two values)
+quality < 0.75 → 3 steps  (first three values)
+quality ≥ 0.75 → 4 steps  (all four values)
 
-// Examples:
-// Intensity 1, Quality 0.8 (4 steps): [30, 35, 40, 45] - very refined
-// Intensity 3, Quality 0.8 (4 steps): [25, 30, 35, 40] - mostly refined
-// Intensity 5, Quality 0.8 (4 steps): [19, 25, 30, 36] - balanced
-// Intensity 7, Quality 0.8 (4 steps): [14, 20, 25, 31] - stylized
-// Intensity 10, Quality 0.8 (4 steps): [6, 12, 18, 24] - max stylization
-// Intensity 1, Quality 0.4 (2 steps): [30, 35] - refined with fewer steps
+// (B) Continuous interpolation within each range:
+// - Calculate progress within range: qualityProgress = (quality - rangeStart) / 0.25
+// - Each value interpolates toward the next:
+//     • Indices 0-2: interpolate toward next index value
+//     • Last index: extrapolate using same spacing as previous step
+// - Formula: result[i] = base[i] + (nextValue[i] - base[i]) * qualityProgress
+
+// SIMPLE EXPLANATION:
+// Quality does TWO things:
+//   1. Adds more steps when crossing thresholds (0.25, 0.50, 0.75)
+//   2. Smoothly shifts all values upward within each range (more refinement)
+
+// Examples (showing quality's dual effect):
+Intensity 10, Quality 0.25: [6, 12]          // 2 steps, base values
+Intensity 10, Quality 0.375: [9, 15]         // 2 steps, values shifted up
+Intensity 10, Quality 0.50: [6, 12, 18]      // 3 steps, base values
+Intensity 10, Quality 0.75: [6, 12, 18, 24]  // 4 steps, base values
+Intensity 10, Quality 1.0: [12, 18, 24, 30]  // 4 steps, all shifted up (max refinement)
+
+Intensity 1, Quality 0.75: [30, 35, 40, 45]  // 4 steps, base chill values
+Intensity 1, Quality 1.0: [35, 40, 45, 50]   // 4 steps, shifted to maximum refinement
+
+Intensity 5, Quality 0.75: [19, 25, 30, 36]  // 4 steps, balanced
+Intensity 5, Quality 1.0: [25, 30, 36, 41]   // 4 steps, shifted upward
 
 // Rationale:
-// - Higher t_index values (later in diffusion timeline) bias toward refinement and realism
-// - Lower t_index values (earlier in diffusion) increase AI stylization and psychedelic effects
-// - Linear interpolation provides smooth, predictable transitions
-// - Quality independently controls computation cost vs visual fidelity
+// - Higher t_index values (later diffusion timesteps) = more refinement/realism
+// - Lower t_index values (earlier timesteps) = more AI stylization/effects
+// - Two-stage approach: intensity sets character, quality adds both steps and refinement
+// - Smooth continuous control over entire intensity×quality parameter space
+// - At quality=1.0, maximum refinement regardless of intensity level
 ```
 
 ### Clip Duration Enforcement
