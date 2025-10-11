@@ -9,6 +9,7 @@ import { Login } from "./components/Login";
 import { Header } from "./components/Header";
 import Capture from "./pages/Capture";
 import ClipView from "./pages/ClipView";
+import ImageTransform from "./pages/ImageTransform";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,6 +26,7 @@ const App = () => (
             <Route path="/start" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/capture" element={<Capture />} />
+            <Route path="/transform" element={<ImageTransform />} />
             <Route path="/clip/:id" element={<ClipView />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
