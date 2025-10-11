@@ -199,11 +199,55 @@ export default function Capture() {
     }
   };
 
-  const initializeStream = useCallback(async (type: 'front' | 'back') => {
+  const initializeStream = useCallback(async (type: 'front' | 'back', initialPrompt: string) => {
     setLoading(true);
     try {
-      // Create Daydream stream
-      const streamData = await createDaydreamStream();
+      // Calculate initial t_index_list based on default creativity and quality
+      const initialTIndexList = calculateTIndexList(creativity[0], quality[0]);
+      
+      // Create Daydream stream with initial params to avoid default psychedelic
+      const initialParams: StreamDiffusionParams = {
+        model_id: 'stabilityai/sdxl-turbo',
+        prompt: initialPrompt,
+        negative_prompt: 'blurry, low quality, flat, 2d, distorted',
+        t_index_list: initialTIndexList,
+        seed: 42,
+        num_inference_steps: 50,
+        // Specify controlnets with disabled state
+        controlnets: [
+          {
+            enabled: true,
+            model_id: 'xinsir/controlnet-depth-sdxl-1.0',
+            preprocessor: 'depth_tensorrt',
+            preprocessor_params: {},
+            conditioning_scale: 0.3,
+          },
+          {
+            enabled: true,
+            model_id: 'xinsir/controlnet-canny-sdxl-1.0',
+            preprocessor: 'canny',
+            preprocessor_params: {},
+            conditioning_scale: 0,
+          },
+          {
+            enabled: true,
+            model_id: 'xinsir/controlnet-tile-sdxl-1.0',
+            preprocessor: 'feedback',
+            preprocessor_params: {},
+            conditioning_scale: 0,
+          },
+        ],
+        // IP-Adapter disabled by default
+        ip_adapter: {
+          enabled: false,
+          type: 'regular',
+          scale: 0,
+          weight_type: 'linear',
+          insightface_model_name: 'buffalo_l',
+        },
+      };
+      
+      const streamData = await createDaydreamStream(initialParams);
 
       setStreamId(streamData.id);
       setPlaybackId(streamData.output_playback_id);
@@ -242,7 +286,7 @@ export default function Capture() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // startWebRTCPublish is stable (doesn't depend on props/state)
+  }, [toast, creativity, quality]); // creativity and quality used in calculateTIndexList for initial params
 
   const selectCamera = useCallback(async (type: 'front' | 'back') => {
     setCameraType(type);
@@ -251,8 +295,9 @@ export default function Capture() {
       : BACK_PROMPTS[Math.floor(Math.random() * BACK_PROMPTS.length)];
     setPrompt(randomPrompt);
 
-    await initializeStream(type);
-  }, [initializeStream]);
+    // Pass the initial prompt to initializeStream
+    await initializeStream(type, randomPrompt);
+  }, [initializeStream, creativity, quality]);
 
   // Auto-start camera on desktop (non-mobile devices)
   useEffect(() => {
@@ -479,8 +524,9 @@ export default function Capture() {
         : null;
 
       // Build params for StreamDiffusion
+      // CRITICAL: Always include model_id to prevent loading default
       const params: StreamDiffusionParams = {
-        model_id: 'stabilityai/sdxl-turbo',
+        model_id: 'stabilityai/sdxl-turbo', // ALWAYS include to prevent model reload
         prompt,
         negative_prompt: 'blurry, low quality, flat, 2d, distorted',
         t_index_list: tIndexList,
