@@ -39,82 +39,20 @@ export interface StreamDiffusionParams {
 
 /**
  * Create a new Daydream stream with the StreamDiffusion pipeline
- * If initialParams provided, updates the stream with those params (with retry for "not ready" state)
- * The param update happens in the background and won't block stream/camera initialization
+ * If initialParams provided, the edge function handles parameter initialization with retry logic
  */
 export async function createDaydreamStream(initialParams?: StreamDiffusionParams): Promise<DaydreamStream> {
-  // Step 1: Create stream (only accepts pipeline_id)
   const { data, error } = await supabase.functions.invoke('daydream-stream', {
     body: { 
-      pipeline_id: 'pip_SDXL-turbo' // Correct SDXL pipeline ID
+      pipeline_id: 'pip_SDXL-turbo',
+      initialParams // Edge function handles param initialization
     }
   });
 
   if (error) throw error;
   if (!data) throw new Error('No stream data returned');
 
-  const stream = data as DaydreamStream;
-
-  // Step 2: Update with initial params in the background (non-blocking)
-  // This allows camera to start immediately while params are being updated
-  if (initialParams) {
-    // Fire and forget - don't await
-    updateDaydreamPromptsWithRetry(stream.id, initialParams).catch(err => {
-      console.error('Background param update failed:', err);
-    });
-  }
-
-  return stream;
-}
-
-/**
- * Update stream prompts with retry logic for "Stream not ready yet" errors
- * Daydream streams need a moment to initialize before accepting parameter updates
- */
-async function updateDaydreamPromptsWithRetry(
-  streamId: string,
-  params: StreamDiffusionParams,
-  maxRetries: number = 10,
-  delayMs: number = 1000
-): Promise<void> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      // Wait before attempting (except first attempt)
-      if (attempt > 0) {
-        console.log(`Retrying param update in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-      
-      await updateDaydreamPrompts(streamId, params);
-      console.log('✓ Stream params updated successfully');
-      return; // Success!
-      
-    } catch (error: any) {
-      // Check multiple places where the error message might be
-      const errorStr = JSON.stringify(error);
-      const errorMessage = error?.message || error?.error?.error || errorStr;
-      
-      // Check if it's a "not ready" error
-      const isNotReadyError = 
-        errorMessage.includes('not ready') || 
-        errorMessage.includes('Stream not ready') ||
-        errorStr.includes('not ready') ||
-        errorStr.includes('Stream not ready');
-      
-      if (isNotReadyError) {
-        console.log(`Stream not ready yet (attempt ${attempt + 1}/${maxRetries})`);
-        // Continue to next retry
-      } else {
-        // For other errors, log but don't retry
-        console.error('Non-retryable error updating stream params:', error);
-        console.warn('Stream will use default parameters');
-        return; // Exit without throwing
-      }
-    }
-  }
-  
-  // All retries exhausted
-  console.warn(`⚠ Failed to update initial stream params after ${maxRetries} retries. Stream will use defaults.`);
+  return data as DaydreamStream;
 }
 
 /**

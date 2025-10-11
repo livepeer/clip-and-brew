@@ -556,27 +556,27 @@ navigate('/path');
 - Daydream API's POST `/v1/streams` only accepts `pipeline_id` parameter
 - Initial parameters (prompt, t_index_list, etc.) must be sent via separate PATCH request
 - Stream needs time to initialize before accepting parameter updates
-- Original implementation awaited the param update, blocking camera start
 
-**Solution** (`src/lib/daydream.ts`):
-1. **Non-blocking param updates**: Stream creation returns immediately, param update happens in background
-2. **Retry logic**: Up to 10 retries with 1-second intervals for "not ready" errors
-3. **Graceful degradation**: If param update fails, stream continues with defaults
-4. **Camera starts immediately**: WebRTC/camera initialization no longer blocked by param updates
+**Solution** (`supabase/functions/daydream-stream/index.ts`):
+Edge function now handles both stream creation AND parameter initialization:
+1. **Single client call**: Client passes `initialParams` to edge function
+2. **Server-side retry**: Edge function handles 10 retries with 1-second intervals for "not ready" errors
+3. **Non-blocking**: Edge function returns immediately, params update in background
+4. **Graceful degradation**: If param update fails, stream continues with defaults
 
 ```typescript
-// Create stream (returns immediately)
+// Client: One simple call
 const stream = await createDaydreamStream(initialParams);
 
-// Params update in background with retry (doesn't block camera)
-updateDaydreamPromptsWithRetry(stream.id, initialParams).catch(...);
+// Edge function: Handles create + param init with retry
+POST /v1/streams → PATCH /v1/streams/:id (with retry)
 ```
 
 **Impact**: 
 - Camera shows video feed immediately (~2-3 seconds)
 - Stream parameters applied within 1-2 seconds (background)
-- No more "Stream not ready yet" errors blocking the UI
-- Better UX with faster perceived load time
+- No more "Stream not ready yet" errors visible to user
+- Cleaner architecture: retry logic centralized in edge function
 
 ### Camera Mirroring (✅ RESOLVED)
 **Solution**: Mirror the MediaStream **at the source** before sending to Daydream:
@@ -846,8 +846,8 @@ Avoid:
 ---
 
 **Last Updated**: 2025-10-11
-- Fixed stream initialization race condition: "Stream not ready yet" errors resolved with retry logic and non-blocking param updates
-- Camera now starts immediately while params update in background (no more black screen)
+- Fixed stream initialization race condition: moved retry logic to edge function for cleaner architecture
+- Camera now starts immediately while params update in background (no more black screen or "Stream not ready yet" errors)
 - Fixed critical params updating logic bugs: stream now starts with correct prompt (via immediate post-creation prompt update) and no model reload issues
 - Canvas-based mirroring at source for natural selfie mode
 - Interactive ticket redemption with swipe-to-validate UX
