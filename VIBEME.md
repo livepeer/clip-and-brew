@@ -221,10 +221,11 @@ These are **non-negotiable** technical requirements:
 ### Daydream API
 - **Base URL**: `https://api.daydream.live`
 - **Endpoints**:
-  - `POST /v1/streams` - Create stream
-  - `POST /beta/streams/:id/prompts` - Update prompt
+  - `POST /v1/streams` - Create stream (body: `{pipeline_id}`)
+  - `PATCH /v1/streams/:id` - Update stream params (body: `{params: {...}}`)
 - **Auth**: Bearer token (`DAYDREAM_API_KEY`)
-- **Key fields**: `pipeline_id`, `prompt`, `texture_weight`, `t_index_list`
+- **Key fields**: `pipeline_id`, `prompt`, `t_index_list`, `controlnets`, `model_id`
+- **Hot-swappable params**: `prompt`, `num_inference_steps`, `t_index_list`, `seed`, `controlnets[*].conditioning_scale`
 
 ### Livepeer Studio API
 - **Base URL**: `https://livepeer.studio/api`
@@ -630,18 +631,19 @@ verify_jwt = false
 - If `model_id` omitted from any param update, Daydream tries to reload default model
 - `ip_adapter` must always be specified (even if disabled) per Daydream API requirements
 
-**Solutions** (`src/lib/daydream.ts` + `src/pages/Capture.tsx`):
+**Solutions** (`src/lib/daydream.ts` + `src/pages/Capture.tsx` + edge functions):
 1. Fixed pipeline_id to `'pip_SDXL-turbo'` (correct SDXL pipeline)
-2. Fixed top-level model_id to `'streamdiffusion-sdxl'` (SDXL variant, not base streamdiffusion)
-3. Modified `createDaydreamStream()` to accept `initialParams` 
-4. After creating stream, immediately call `updateDaydreamPrompts()` with initial params:
+2. Fixed API endpoint: Changed from `POST /beta/streams/:id/prompts` to `PATCH /v1/streams/:id`
+3. Fixed body structure: Send `{params: {...}}` directly, not wrapped in `{model_id, pipeline, params}`
+4. Modified `createDaydreamStream()` to accept `initialParams` 
+5. After creating stream, immediately call `updateDaydreamPrompts()` with initial params:
    - `model_id`: Always set to `'stabilityai/sdxl-turbo'`
    - `prompt`: Use selected random prompt based on camera type
    - `t_index_list`: Calculate from initial creativity/quality values
    - `controlnets`: Specify all SDXL controlnets with conditioning scales
    - `ip_adapter`: Always include even when disabled (set `enabled: false`)
-5. Added critical comments to always include `model_id` in param updates
-6. Ensured `ip_adapter` always specified in updates (even if disabled)
+6. Added critical comments to always include `model_id` in param updates
+7. Ensured `ip_adapter` always specified in updates (even if disabled)
 
 **Impact**: 
 - Pipeline now runs on correct SDXL nodes

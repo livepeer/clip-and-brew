@@ -23,10 +23,10 @@ serve(async (req) => {
 
     console.log('Sending prompt to stream:', streamId, promptBody);
 
-    // Send the full prompt body as-is (current API behavior)
-    // The body should already be in the correct format from the client
-    const response = await fetch(`https://api.daydream.live/beta/streams/${streamId}/prompts`, {
-      method: 'POST',
+    // Send the params body as-is to the PATCH endpoint
+    // The body should be in format: { params: { ... } }
+    const response = await fetch(`https://api.daydream.live/v1/streams/${streamId}`, {
+      method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${DAYDREAM_API_KEY}`,
         'Content-Type': 'application/json',

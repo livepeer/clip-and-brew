@@ -110,7 +110,7 @@ Secrets:
 Routes (prefix `/functions/v1`):
 
 1. `POST /daydream-stream` → proxy → `https://api.daydream.live/v1/streams` (body: `{pipeline_id}`) → returns `{id, output_playback_id, whip_url}`.
-2. `POST /daydream-prompt` → proxy → `/beta/streams/:id/prompts` (send full body per current API).
+2. `POST /daydream-prompt` → proxy → `PATCH /v1/streams/:id` (body: `{params: {...}}`).
 3. `POST /studio-request-upload` → calls Livepeer **Request Upload** API → returns `{uploadUrl, assetId, tus}` (pre-signed upload URL).
 4. `POST /studio-asset-status` → body `{ assetId }` → GET Livepeer asset status → returns `{status, playbackId, downloadUrl}`.
 5. `POST /save-clip` → body `{ assetId, playbackId, downloadUrl, durationMs, session_id, prompt, texture_id, texture_weight, t_index_list }` → inserts into `clips` table → returns clip record.
