@@ -155,6 +155,7 @@ export default function Capture() {
   const [playbackId, setPlaybackId] = useState<string | null>(null);
   const [whipUrl, setWhipUrl] = useState<string | null>(null);
   const [autoStartChecked, setAutoStartChecked] = useState(false);
+  const [streamInitialized, setStreamInitialized] = useState(false);
 
   const [prompt, setPrompt] = useState('');
   const [selectedTexture, setSelectedTexture] = useState<string | null>(null);
@@ -295,6 +296,7 @@ export default function Capture() {
       setStreamId(streamData.id);
       setPlaybackId(streamData.output_playback_id);
       setWhipUrl(streamData.whip_url);
+      setStreamInitialized(false); // Mark as not yet initialized (will be set to true after a delay)
 
       // Start WebRTC publishing
       await startWebRTCPublish(streamData.whip_url, type);
@@ -836,15 +838,27 @@ export default function Capture() {
     return manualSrc as any;
   }, [playbackId]);
 
+  // Mark stream as initialized after the background initialization has had time to complete
   useEffect(() => {
-    if (prompt && streamId) {
+    if (streamId && !streamInitialized) {
+      // Wait 3 seconds for the background initialization to complete before allowing updates
+      const timer = setTimeout(() => {
+        setStreamInitialized(true);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [streamId, streamInitialized]);
+
+  useEffect(() => {
+    // Only update if stream is initialized (skip the initial update when stream is first created)
+    if (prompt && streamId && streamInitialized) {
       const debounce = setTimeout(() => {
         updatePrompt();
       }, 500);
       return () => clearTimeout(debounce);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId]);
+  }, [prompt, selectedTexture, textureWeight, creativity, quality, streamId, streamInitialized]);
 
   // Update recording timer display
   useEffect(() => {
@@ -920,6 +934,7 @@ export default function Capture() {
         setStreamId(null);
         setWhipUrl(null);
         setIsPlaying(false);
+        setStreamInitialized(false);
       } else {
         // User returned to the tab
         if (tabHiddenTimeRef.current && wasStreamActiveRef.current) {
