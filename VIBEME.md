@@ -405,21 +405,10 @@ const clip = await saveClipToDatabase({ assetId, playbackId, ... });
 ```
 
 **Key implementation notes**:
-- `captureStream()` must be called on the actual `<video>` DOM element (not iframe)
-- Front camera mirroring: Canvas-based stream manipulation before sending to Daydream
-  ```typescript
-  // Mirror at source (in startWebRTCPublish)
-  const mirrorStream = (originalStream: MediaStream): MediaStream => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d')!;
-    ctx.scale(-1, 1); // Mirror horizontally
-    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-    return canvas.captureStream(30); // + audio tracks
-  };
-  ```
-- Recording is of AI-processed output, not original camera feed
-- WebM format with 100ms timeslice for smooth capture
-- Maximum 2-minute polling for asset processing
+- `captureStream()` must be called on actual `<video>` DOM element (not iframe)
+- Front camera mirroring: Canvas-based stream manipulation before sending to Daydream (mirrors at source, not CSS)
+- Recording captures AI-processed output, not original camera feed
+- WebM format with 100ms timeslice, max 2min polling for asset processing
 
 ## 🎯 Key Business Logic
 
@@ -793,13 +782,17 @@ Avoid:
 
 ---
 
-**Last Updated**: 2025-10-10
+**Last Updated**: 2025-10-11
 - Canvas-based mirroring at source for natural selfie mode
 - Interactive ticket redemption with swipe-to-validate UX
 - Fixed ICE gathering delay (40s → 2s) with STUN redundancy + timeout
 - Fixed missing edge function configs causing 404 errors
 - Fixed React hook dependency issues in auto-start flow
 - Expanded default prompts: 14 front camera (portraits) + 15 back camera (scenes) with trippy/artistic styles
+- **Privacy fix**: Auto-stop camera/audio streams when user leaves tab (Page Visibility API)
+  - Streams stop immediately when tab hidden (safest for privacy)
+  - Auto-restart if user returns after >5s (shows loading state)
+  - If <5s away, no auto-restart (user must manually restart)
 **Project Status**: Active development for Livepeer × Daydream Summit (Brewdream)
 **Maintainer Note**: Keep this file concise but comprehensive. Every section should answer "what do I need to know to work on this?" Always check PRD for feature requirements before implementing.
 

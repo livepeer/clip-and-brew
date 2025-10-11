@@ -183,6 +183,8 @@ export default function Capture() {
   const originalStreamRef = useRef<MediaStream | null>(null);
   const silentAudioTrackRef = useRef<MediaStreamTrack | null>(null);
   const realAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const tabHiddenTimeRef = useRef<number | null>(null);
+  const wasStreamActiveRef = useRef<boolean>(false);
 
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -198,6 +200,47 @@ export default function Capture() {
       navigate('/login');
     }
   };
+
+  /**
+   * Stop all media streams and clean up resources
+   */
+  const stopAllMediaStreams = useCallback(() => {
+    console.log('Stopping all media streams...');
+    
+    // Stop all tracks in the original stream
+    if (originalStreamRef.current) {
+      originalStreamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('Stopped track:', track.kind, track.id);
+      });
+      originalStreamRef.current = null;
+    }
+
+    // Stop audio tracks
+    if (realAudioTrackRef.current) {
+      realAudioTrackRef.current.stop();
+      realAudioTrackRef.current = null;
+    }
+    if (silentAudioTrackRef.current) {
+      silentAudioTrackRef.current.stop();
+      silentAudioTrackRef.current = null;
+    }
+
+    // Close WebRTC peer connection
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
+    // Stop the PiP video
+    if (sourceVideoRef.current && sourceVideoRef.current.srcObject) {
+      const stream = sourceVideoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      sourceVideoRef.current.srcObject = null;
+    }
+
+    console.log('All media streams stopped');
+  }, []);
 
   const initializeStream = useCallback(async (type: 'front' | 'back') => {
     setLoading(true);
@@ -809,20 +852,57 @@ export default function Capture() {
   // Cleanup audio tracks on unmount
   useEffect(() => {
     return () => {
-      if (realAudioTrackRef.current) {
-        realAudioTrackRef.current.stop();
-        realAudioTrackRef.current = null;
-      }
-      if (silentAudioTrackRef.current) {
-        silentAudioTrackRef.current.stop();
-        silentAudioTrackRef.current = null;
-      }
-      if (originalStreamRef.current) {
-        originalStreamRef.current.getTracks().forEach(track => track.stop());
-        originalStreamRef.current = null;
+      stopAllMediaStreams();
+    };
+  }, [stopAllMediaStreams]);
+
+  // Handle tab visibility changes - stop streams when user leaves tab
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // User left the tab - record the time and stop streams immediately
+        console.log('Tab hidden - stopping media streams for privacy');
+        tabHiddenTimeRef.current = Date.now();
+        wasStreamActiveRef.current = !!playbackId; // Remember if we had an active stream
+        
+        // Stop all media streams immediately for privacy/safety
+        stopAllMediaStreams();
+        
+        // Clear the playback and stream state to show loading when they return
+        setPlaybackId(null);
+        setStreamId(null);
+        setWhipUrl(null);
+        setIsPlaying(false);
+      } else {
+        // User returned to the tab
+        if (tabHiddenTimeRef.current && wasStreamActiveRef.current) {
+          const timeAway = Date.now() - tabHiddenTimeRef.current;
+          console.log(`Tab visible again after ${timeAway}ms away`);
+          
+          // If user was gone for more than 5 seconds, restart the stream
+          if (timeAway > 5000 && cameraType) {
+            console.log('User was away >5s, restarting stream...');
+            toast({
+              title: 'Restarting stream',
+              description: 'Reconnecting your camera...',
+            });
+            // Restart the stream with the same camera type
+            initializeStream(cameraType);
+          }
+          
+          // Reset the tracking variables
+          tabHiddenTimeRef.current = null;
+          wasStreamActiveRef.current = false;
+        }
       }
     };
-  }, []);
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [cameraType, playbackId, stopAllMediaStreams, initializeStream, toast]);
 
   // Show reassuring message if stream takes longer than 10s to load
   useEffect(() => {
