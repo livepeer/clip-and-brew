@@ -45,7 +45,7 @@ export async function createDaydreamStream(initialParams?: StreamDiffusionParams
   // Step 1: Create stream (only accepts pipeline_id)
   const { data, error } = await supabase.functions.invoke('daydream-stream', {
     body: { 
-      pipeline_id: 'pip_qpUgXycjWF6YMeSL' // StreamDiffusion SDXL pipeline
+      pipeline_id: 'pip_SDXL-turbo' // Correct SDXL pipeline ID
     }
   });
 
