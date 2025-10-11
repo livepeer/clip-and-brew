@@ -369,28 +369,31 @@ export default function Capture() {
       // Store the original stream
       originalStreamRef.current = originalStream;
 
-      // Extract and store the real audio track if available
-      const audioTracks = originalStream.getAudioTracks();
-      if (audioTracks.length > 0 && hasAudioPermission) {
-        realAudioTrackRef.current = audioTracks[0];
-        // Stop the real audio track initially (mic is off by default)
-        realAudioTrackRef.current.enabled = false;
-      }
-
-      // Create a silent audio track for initial streaming
-      const silentTrack = createSilentAudioTrack();
-      silentAudioTrackRef.current = silentTrack;
-
       // Mirror the stream if using front camera
       const videoStream = type === 'front' ? mirrorStream(originalStream) : originalStream;
 
-      // Remove all audio tracks from the video stream
-      videoStream.getAudioTracks().forEach(track => {
-        videoStream.removeTrack(track);
-      });
-
-      // Add the silent audio track to the stream
-      videoStream.addTrack(silentTrack);
+      // Handle audio track setup
+      const audioTracks = originalStream.getAudioTracks();
+      if (audioTracks.length > 0 && hasAudioPermission) {
+        // We have mic permission - use the real audio track but start disabled
+        realAudioTrackRef.current = audioTracks[0];
+        realAudioTrackRef.current.enabled = false; // Mic off by default
+        
+        // Make sure the audio track is in the video stream
+        if (!videoStream.getAudioTracks().find(t => t.id === realAudioTrackRef.current!.id)) {
+          videoStream.addTrack(realAudioTrackRef.current);
+        }
+      } else {
+        // No mic permission - use silent audio track
+        const silentTrack = createSilentAudioTrack();
+        silentAudioTrackRef.current = silentTrack;
+        
+        // Remove any existing audio tracks and add silent one
+        videoStream.getAudioTracks().forEach(track => {
+          videoStream.removeTrack(track);
+        });
+        videoStream.addTrack(silentTrack);
+      }
 
       if (sourceVideoRef.current) {
         sourceVideoRef.current.srcObject = videoStream;
@@ -408,54 +411,35 @@ export default function Capture() {
   };
 
   const toggleMicrophone = async () => {
-    // If already enabled, disable it
-    if (micEnabled) {
-      if (realAudioTrackRef.current && pcRef.current) {
-        // Get the sender for the audio track
-        const senders = pcRef.current.getSenders();
-        const audioSender = senders.find(sender => sender.track?.kind === 'audio');
-        
-        if (audioSender && silentAudioTrackRef.current) {
-          // Replace the real audio track with the silent one
-          await audioSender.replaceTrack(silentAudioTrackRef.current);
-          realAudioTrackRef.current.enabled = false;
-        }
-      }
-      setMicEnabled(false);
-      toast({
-        title: 'Microphone disabled',
-        description: 'Streaming silent audio',
-      });
-      return;
-    }
-
-    // If permission was denied, try to request it again
+    // If permission was denied or never granted, try to request it
     if (micPermissionDenied || !realAudioTrackRef.current) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const audioTrack = stream.getAudioTracks()[0];
         
-        if (audioTrack) {
-          realAudioTrackRef.current = audioTrack;
-          setMicPermissionGranted(true);
-          setMicPermissionDenied(false);
+        if (audioTrack && pcRef.current) {
+          // Replace the silent track with the real one (only time we replace)
+          const senders = pcRef.current.getSenders();
+          const audioSender = senders.find(sender => sender.track?.kind === 'audio');
           
-          // Replace the silent track with the real one
-          if (pcRef.current) {
-            const senders = pcRef.current.getSenders();
-            const audioSender = senders.find(sender => sender.track?.kind === 'audio');
+          if (audioSender && silentAudioTrackRef.current) {
+            await audioSender.replaceTrack(audioTrack);
+            realAudioTrackRef.current = audioTrack;
+            realAudioTrackRef.current.enabled = true;
             
-            if (audioSender) {
-              await audioSender.replaceTrack(audioTrack);
-              audioTrack.enabled = true;
-            }
+            // Stop the old silent track
+            silentAudioTrackRef.current.stop();
+            silentAudioTrackRef.current = null;
+            
+            setMicPermissionGranted(true);
+            setMicPermissionDenied(false);
+            setMicEnabled(true);
+            
+            toast({
+              title: 'Microphone enabled',
+              description: 'Now streaming live audio',
+            });
           }
-          
-          setMicEnabled(true);
-          toast({
-            title: 'Microphone enabled',
-            description: 'Now streaming live audio',
-          });
         }
       } catch (error) {
         console.error('Error requesting microphone permission:', error);
@@ -469,22 +453,15 @@ export default function Capture() {
       return;
     }
 
-    // Enable the microphone
-    if (realAudioTrackRef.current && pcRef.current) {
-      // Get the sender for the audio track
-      const senders = pcRef.current.getSenders();
-      const audioSender = senders.find(sender => sender.track?.kind === 'audio');
+    // We have the real audio track - just toggle the enabled property
+    if (realAudioTrackRef.current) {
+      const newEnabledState = !micEnabled;
+      realAudioTrackRef.current.enabled = newEnabledState;
+      setMicEnabled(newEnabledState);
       
-      if (audioSender) {
-        // Replace the silent track with the real one
-        await audioSender.replaceTrack(realAudioTrackRef.current);
-        realAudioTrackRef.current.enabled = true;
-      }
-      
-      setMicEnabled(true);
       toast({
-        title: 'Microphone enabled',
-        description: 'Now streaming live audio',
+        title: newEnabledState ? 'Microphone enabled' : 'Microphone disabled',
+        description: newEnabledState ? 'Now streaming live audio' : 'Microphone muted',
       });
     }
   };
