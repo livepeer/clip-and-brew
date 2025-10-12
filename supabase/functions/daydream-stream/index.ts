@@ -5,61 +5,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Helper to wait for stream to be ready and update params
-async function initializeStreamParams(streamId: string, params: any, apiKey: string, maxRetries = 20) {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      // Wait 2 seconds before each attempt to give stream more time to initialize
-      if (attempt > 0) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-
-      console.log(`[EDGE] Attempt ${attempt + 1}: Sending params to Daydream:`, JSON.stringify(params, null, 2));
-      
-      // PATCH /v1/streams/:id is the correct, new API
-      // Body format: { params: { ... } }
-      const response = await fetch(`https://api.daydream.live/v1/streams/${streamId}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ params }),
-      });
-
-      const data = await response.json();
-      
-      if (response.ok) {
-        console.log('✓ Stream params initialized successfully:', JSON.stringify(data, null, 2));
-        return;
-      }
-
-      // Check if it's a "not ready" error
-      const errorStr = JSON.stringify(data);
-      if (errorStr.includes('not ready') || errorStr.includes('Stream not ready')) {
-        console.log(`Stream not ready yet (attempt ${attempt + 1}/${maxRetries})`);
-        continue; // Retry
-      }
-
-      // Other error - log and continue
-      console.warn('Could not initialize stream params:', data);
-      return;
-
-    } catch (error) {
-      console.error('Error initializing stream params:', error);
-      return;
-    }
-  }
-  
-  console.warn('⚠ Stream params initialization timed out after retries');
-}
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
-  console.log('[EDGE] daydream-stream function called (version: 2025-10-12-fixed-endpoint)');
+  console.log('[EDGE] daydream-stream function called (version: 2025-10-12-correct-api-endpoint)');
 
   try {
     const DAYDREAM_API_KEY = Deno.env.get('DAYDREAM_API_KEY');
@@ -68,19 +19,33 @@ serve(async (req) => {
     }
 
     const body = await req.json();
-    const pipeline_id = body.pipeline_id || 'pip_SDXL-turbo';
-    const initialParams = body.initialParams; // Optional initial parameters
+    const initialParams = body.initialParams;
 
-    console.log('[EDGE] Creating Daydream stream with pipeline:', pipeline_id);
+    console.log('[EDGE] Creating Daydream stream');
 
-    // Step 1: Create stream (only accepts pipeline_id)
-    const createResponse = await fetch('https://api.daydream.live/v1/streams', {
+    // Use the correct /api/streams endpoint (not /v1/streams)
+    // Based on HAR: POST /api/streams with {"name":"...","preset":"daydream","metadata":{"model":"streamdiffusion"}}
+    const createPayload: any = {
+      name: `Stream ${Date.now()}`,
+      preset: 'daydream',
+      metadata: {
+        model: 'streamdiffusion'
+      }
+    };
+
+    // If initial params provided, include them in the creation
+    if (initialParams) {
+      console.log('[EDGE] Including initial params in stream creation:', JSON.stringify(initialParams, null, 2));
+      createPayload.params = initialParams;
+    }
+
+    const createResponse = await fetch('https://daydream.live/api/streams', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${DAYDREAM_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ pipeline_id }),
+      body: JSON.stringify(createPayload),
     });
 
     const streamData = await createResponse.json();
@@ -94,18 +59,13 @@ serve(async (req) => {
       });
     }
 
-    const { id, output_playback_id, whip_url } = streamData;
-
-    // Step 2: Initialize params if provided (with retry logic, non-blocking)
-    if (initialParams) {
-      console.log('[EDGE] Received initialParams for stream', id, ':', JSON.stringify(initialParams, null, 2));
-      // Fire and forget - don't block the response
-      initializeStreamParams(id, initialParams, DAYDREAM_API_KEY).catch(err => {
-        console.error('Background param initialization failed:', err);
-      });
-    } else {
-      console.warn('[EDGE] No initialParams provided - stream will start with defaults');
-    }
+    // Extract the fields we need - API response has different structure
+    const { id } = streamData;
+    
+    // The HAR shows the response has an id, but we need to construct the playback/whip URLs
+    // Based on the working implementation pattern
+    const output_playback_id = id; // Use the stream ID as playback ID
+    const whip_url = `https://daydream.live/api/streams/${id}/whip`;
 
     // Return immediately with stream info
     return new Response(JSON.stringify({ id, output_playback_id, whip_url }), {

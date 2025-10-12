@@ -10,7 +10,7 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  console.log('[EDGE] daydream-prompt function called (version: 2025-10-12-fixed-endpoint)');
+  console.log('[EDGE] daydream-prompt function called (version: 2025-10-12-correct-api-endpoint)');
 
   try {
     const DAYDREAM_API_KEY = Deno.env.get('DAYDREAM_API_KEY');
@@ -26,9 +26,9 @@ serve(async (req) => {
     console.log('[EDGE] Updating prompt for stream:', streamId);
     console.log('[EDGE] Params being sent:', JSON.stringify(promptBody, null, 2));
 
-    // PATCH /v1/streams/:id is the correct, new API (POST /beta/streams/:id/prompts is deprecated)
-    // Body format: { params: { ... } }
-    const response = await fetch(`https://api.daydream.live/v1/streams/${streamId}`, {
+    // Use the correct /api/streams endpoint (not /v1/streams)
+    // Based on HAR: PATCH /api/streams/{id} with {"params":{...}}
+    const response = await fetch(`https://daydream.live/api/streams/${streamId}`, {
       method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${DAYDREAM_API_KEY}`,
