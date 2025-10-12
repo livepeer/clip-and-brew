@@ -19,27 +19,23 @@ serve(async (req) => {
     }
 
     const body = await req.json();
+    const pipeline_id = body.pipeline_id || 'pip_SDXL-turbo';
     const initialParams = body.initialParams;
 
-    console.log('[EDGE] Creating Daydream stream');
+    console.log('[EDGE] Creating Daydream stream with pipeline:', pipeline_id);
 
-    // Use the correct /api/streams endpoint (not /v1/streams)
-    // Based on HAR: POST /api/streams with {"name":"...","preset":"daydream","metadata":{"model":"streamdiffusion"}}
+    // Create payload with pipeline_id and optional pipeline_params
     const createPayload: any = {
-      name: `Stream ${Date.now()}`,
-      preset: 'daydream',
-      metadata: {
-        model: 'streamdiffusion'
-      }
+      pipeline_id
     };
 
-    // If initial params provided, include them in the creation
+    // If initial params provided, include them as pipeline_params in creation
     if (initialParams) {
-      console.log('[EDGE] Including initial params in stream creation:', JSON.stringify(initialParams, null, 2));
-      createPayload.params = initialParams;
+      console.log('[EDGE] Including initial params as pipeline_params:', JSON.stringify(initialParams, null, 2));
+      createPayload.pipeline_params = initialParams;
     }
 
-    const createResponse = await fetch('https://daydream.live/api/streams', {
+    const createResponse = await fetch('https://api.daydream.live/v1/streams', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${DAYDREAM_API_KEY}`,
@@ -59,13 +55,7 @@ serve(async (req) => {
       });
     }
 
-    // Extract the fields we need - API response has different structure
-    const { id } = streamData;
-    
-    // The HAR shows the response has an id, but we need to construct the playback/whip URLs
-    // Based on the working implementation pattern
-    const output_playback_id = id; // Use the stream ID as playback ID
-    const whip_url = `https://daydream.live/api/streams/${id}/whip`;
+    const { id, output_playback_id, whip_url } = streamData;
 
     // Return immediately with stream info
     return new Response(JSON.stringify({ id, output_playback_id, whip_url }), {
