@@ -178,7 +178,7 @@ Supabase Functions Invoke
   ↓
 daydream-prompt edge function
   ↓
-Daydream API: PATCH /v1/streams/:id
+Daydream API: POST /beta/streams/:id/prompts (deprecated API)
   ↓
 Stream applies parameters (hopefully!)
 ```

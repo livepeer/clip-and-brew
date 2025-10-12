@@ -240,7 +240,7 @@ Two modes: **Anonymous** (instant access) + **Email OTP** (for coffee tickets)
 
 **Daydream API** (AI streaming):
 - Base: `https://api.daydream.live`
-- Endpoints: `POST /v1/streams`, `PATCH /v1/streams/:id`
+- Endpoints: `POST /v1/streams`, `POST /beta/streams/:id/prompts` (deprecated, but stable)
 - All calls proxied through edge functions (key never exposed)
 
 **Livepeer Studio API** (clip upload):
@@ -601,7 +601,7 @@ navigate('/path');
 
 **The Fix**:
 - Use correct pipeline: `pip_SDXL-turbo`
-- Use correct endpoint: `PATCH /v1/streams/:id` with `{params: {...}}`
+- Use deprecated endpoint: `POST /beta/streams/:id/prompts` with `{pipeline: ..., model_id: ..., params: {...}}`
 - Always include `model_id` and `ip_adapter` in updates
 - Initialize params immediately after stream creation
 

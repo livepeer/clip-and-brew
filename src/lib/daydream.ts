@@ -175,8 +175,10 @@ export async function updateDaydreamPrompts(
   }));
 
   // CRITICAL: Always include model_id to prevent Daydream from loading default
-  // API expects just { params: { ... } } structure for PATCH /v1/streams/:id
+  // API expects { pipeline, model_id, params: { ... } } structure for POST /beta/streams/:id/prompts (deprecated API)
   const body = {
+    pipeline: 'live-video-to-video',
+    model_id: 'streamdiffusion',
     params: {
       model_id: params.model_id || 'stabilityai/sdxl-turbo', // ALWAYS include
       prompt: params.prompt,
