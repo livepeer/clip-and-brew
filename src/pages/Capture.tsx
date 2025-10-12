@@ -260,8 +260,6 @@ export default function Capture() {
         t_index_list: initialTIndexList,
         seed: 42,
         num_inference_steps: 50,
-        width: 512, // Match video input dimensions
-        height: 512, // Match video input dimensions
         // Specify controlnets with disabled state
         controlnets: [
           {
