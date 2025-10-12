@@ -184,6 +184,8 @@ export async function updateDaydreamPrompts(
       num_inference_steps: params.num_inference_steps || 50,
       seed: params.seed || 42,
       t_index_list: params.t_index_list || [6, 12, 18],
+      width: 512, // Match video input dimensions
+      height: 512, // Match video input dimensions
       controlnets: mergedControlnets,
       // ALWAYS specify IP-Adapter (even if disabled)
       ip_adapter: params.ip_adapter || {
