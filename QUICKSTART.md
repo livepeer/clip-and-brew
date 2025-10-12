@@ -129,7 +129,8 @@ Just push and it's live! 🚀
 
 - Check `VIBEME.md` for architecture details
 - Check `PRD.md` for product requirements
-- Check `ANONYMOUS_AUTH.md` for auth flow details
+- Check `docs/ANONYMOUS_AUTH.md` for auth flow details
+- Check `docs/` folder for implementation guides
 - Ask in team chat!
 
 ---

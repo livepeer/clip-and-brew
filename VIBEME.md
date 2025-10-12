@@ -1,10 +1,59 @@
 # VIBEME.md - Brewdream Project Context
 
-> **Purpose**: High-level context for AI agents. Read this first to understand the project's architecture, patterns, and conventions before making changes. Update this file when making significant architectural changes.
+> **Purpose**: High-level context for AI agents. Read this first to understand the project's architecture, patterns, and conventions before making changes.
 >
 > **Related Documents**:
 > - [`PRD.md`](./PRD.md) - Product vision, requirements, and acceptance criteria (the "what" and "why")
 > - **VIBEME.md** (this file) - Current implementation state, patterns, and conventions (the "how")
+> - [`docs/`](./docs/) - Detailed implementation guides and API references
+
+## 🚀 TL;DR - Start Here
+
+**What is this?** Mobile event app for AI-stylized video clips at Livepeer × Daydream Summit
+
+**Tech Stack**: React + TypeScript + Supabase + Daydream AI + Livepeer
+
+**Core Flow**: Camera → Daydream AI (real-time effects) → Livepeer (streaming/clipping) → Share on X → Coffee ticket
+
+**Key Files to Know**:
+- `src/lib/daydream.ts` - Stream creation & AI effects
+- `src/lib/recording.ts` - Video capture & upload
+- `src/pages/Capture.tsx` - Main UI orchestration
+- `supabase/functions/` - API proxies (no client-side keys!)
+
+**Need Details?** Check the Quick Navigation Guide below or `docs/` folder
+
+---
+
+## 📖 How to Use This Document
+
+**VIBEME Philosophy**:
+- **Stay Concise**: Focus on high-level overview, not implementation details
+- **Preserve Intent**: Document historical decisions and quirks so they're not forgotten
+- **Point to Details**: Reference specific docs in `docs/` folder for deep-dives
+- **Map the Territory**: Clearly outline project structure so agents know where to look
+
+**When making changes**:
+1. Read this file first for overall context
+2. Check `docs/` folder for detailed guides on specific features
+3. Update VIBEME only for architectural changes, not implementation details
+4. Add new detailed docs to `docs/` folder, not here
+
+### Quick Navigation Guide
+
+| **Looking for...** | **Go to...** |
+|-------------------|-------------|
+| Overall architecture | This file (VIBEME.md) |
+| Product requirements | `PRD.md` |
+| Daydream API details | `docs/DAYDREAM_API_GUIDE.md` |
+| WHIP/WebRTC setup | `docs/DAYDREAM_INTEGRATION.md` |
+| Recording/upload flow | `docs/RECORDING_IMPLEMENTATION.md` |
+| Auth implementation | `docs/ANONYMOUS_AUTH.md` |
+| Core stream logic | `src/lib/daydream.ts` |
+| Core recording logic | `src/lib/recording.ts` |
+| Main capture UI | `src/pages/Capture.tsx` |
+| Edge functions | `supabase/functions/` |
+| Database schema | `supabase/migrations/` |
 
 ## 🎯 Project Mission
 
@@ -35,30 +84,31 @@ Camera → WebRTC → Daydream Stream (AI effects) → Livepeer (HLS playback)
 
 ## 🗂️ Project Structure
 
-```
-src/
-├── pages/          # Route pages (Capture, ClipView, NotFound, Index)
-├── components/     # Reusable components (Gallery, Landing, Login)
-│   └── ui/         # shadcn/ui components (50+ components)
-├── integrations/
-│   └── supabase/   # Supabase client & types
-├── hooks/          # Custom React hooks (use-mobile, use-toast)
-└── lib/            # Utilities (cn helper, recording, daydream)
-    ├── recording.ts    # VideoRecorder class, upload/save functions
-    └── daydream.ts     # Daydream stream & WHIP utilities
+**Frontend (`src/`)**:
+- `pages/` - Route components (Capture, ClipView, Index, NotFound)
+- `components/` - Reusable UI (Gallery, Landing, Login) + shadcn/ui library
+- `lib/` - **Core utilities** (where the magic happens):
+  - `daydream.ts` - Stream creation, WHIP publishing, prompt updates
+  - `recording.ts` - Video capture, upload, database save
+- `integrations/supabase/` - Database client & generated types
+- `hooks/` - React hooks (use-mobile, use-toast)
 
-supabase/
-├── functions/      # Edge Functions (API proxy layer)
-│   ├── daydream-stream/       # Create Daydream AI stream
-│   ├── daydream-prompt/       # Update stream prompt/effects
-│   ├── studio-request-upload/ # Request Livepeer upload URL
-│   ├── studio-asset-status/   # Poll Livepeer asset status
-│   ├── save-clip/             # Save clip metadata to DB
-│   ├── generate-ticket/       # Generate coffee QR code
-│   ├── redeem-ticket/         # Mark ticket as redeemed
-│   └── send-auth-email/       # Custom OTP email template
-└── migrations/     # Database schema
-```
+**Backend (`supabase/`)**:
+- `functions/` - **Edge Functions** (API proxy - no client-side keys):
+  - `daydream-stream/` - Create AI stream (proxies Daydream API)
+  - `daydream-prompt/` - Update effects (proxies Daydream API)
+  - `studio-request-upload/` - Get upload URL (proxies Livepeer API)
+  - `studio-asset-status/` - Poll asset status (proxies Livepeer API)
+  - `save-clip/` - Save clip to database
+  - `generate-ticket/`, `redeem-ticket/` - Coffee ticket system
+  - `send-auth-email/` - Custom OTP emails
+- `migrations/` - Database schema (users, sessions, clips, tickets)
+
+**Documentation (`docs/`)**:
+- `DAYDREAM_API_GUIDE.md` - Comprehensive Daydream API reference
+- `DAYDREAM_INTEGRATION.md` - Integration overview
+- `RECORDING_IMPLEMENTATION.md` - Video capture/upload details
+- `ANONYMOUS_AUTH.md` - Auth flow documentation
 
 ## 🎨 Design System
 
@@ -103,77 +153,47 @@ These are **non-negotiable** technical requirements:
 
 ### Video Processing Flow
 
-1. **Stream Creation** (`daydream-stream`):
-   - Pipeline: `pip_SDXL-turbo` (fast AI processing)
-   - Returns: `stream_id`, `output_playback_id`, `whip_url`
+**High-Level Pipeline**:
+1. **Stream Creation** → Edge function creates Daydream stream (`pip_SDXL-turbo`)
+2. **WHIP Publishing** → Browser sends camera/mic to Daydream via WebRTC
+3. **AI Processing** → Daydream applies effects in real-time
+4. **Playback** → Livepeer Player shows output (WebRTC-only, low-latency)
+5. **Recording** → Capture rendered video, upload to Livepeer, save to DB
 
-2. **WebRTC Publishing** (Capture.tsx):
-   - Get user media (512x512, front/back camera)
-   - Create RTCPeerConnection
-   - WHIP protocol to publish to Daydream
-   - PiP preview of source, main view shows AI output
+**Key Implementation Files**:
+- `src/lib/daydream.ts` - Stream creation, WHIP, prompt updates
+- `src/pages/Capture.tsx` - UI orchestration
+- `supabase/functions/daydream-*` - API proxies
 
-3. **Playback Setup** (Capture.tsx):
-   - Uses Livepeer Player SDK v4 (`@livepeer/react/player`)
-   - Daydream playback IDs require manual src construction (getSrc doesn't recognize them):
-     ```typescript
-     const src = [
-       { src: `https://livepeer.studio/webrtc/${playbackId}`, mime: 'video/h264', type: 'webrtc' },
-       { src: `https://livepeer.studio/hls/${playbackId}/index.m3u8`, mime: 'application/vnd.apple.mpegurl', type: 'hls' }
-     ];
-     ```
-   - Front camera mirroring: Stream is mirrored **at the source** using canvas before sending to Daydream
-     - Original stream → Canvas with `scaleX(-1)` → `captureStream()` → Mirrored MediaStream
-     - Mirrored stream sent to both Daydream and PiP preview
-     - Daydream processes mirrored input → Output is naturally mirrored
-     - No CSS transforms needed on output (keeps UI elements like loading spinners readable)
+**AI Controls**:
+- **Prompt**: Text style description
+- **Texture**: Optional overlay (8 presets)
+- **Creativity** (1-10): Controls diffusion strength via `t_index_list` scaling
+- **Quality** (0-1): Number of inference steps (0.25=1, 1.0=4)
 
-4. **AI Effect Controls** (Capture.tsx):
-   - **Prompt**: Text description of style
-   - **Texture**: Optional image overlay (8 presets)
-   - **Creativity** (1-10): Controls denoise strength via `t_index_list`
-   - **Quality** (0-1): Number of diffusion steps (0.25=1 step, 1.0=4 steps)
-   - **t_index_list**: `[6, 12, 18, 24]` scaled by creativity (formula: `2.62 - 0.132 * creativity`)
+**Critical Quirks**:
+- Daydream playback IDs need manual src construction (not `getSrc()`)
+- Front camera mirroring at source (canvas `scaleX(-1)`) before WHIP
+- WebRTC-only playback (`lowLatency=force`)
 
-5. **Clip Recording** (recording.ts + Capture.tsx):
-   - **Button behavior**: Desktop (click toggle), Mobile (press & hold)
-   - Button enabled only when video is playing (listens to video events)
-   - **Capture**: `videoElement.captureStream()` gets live MediaStream from rendered video
-   - **Record**: MediaRecorder with 100ms timeslice collects video chunks
-   - **Duration**: 3-10s enforced (auto-stop at 10s, cancel if <3s)
-   - **Timer**: Updates every 100ms during recording for smooth counter
-   - Records the AI-processed output (not the original camera feed)
+**Detailed Guides**:
+- [`docs/DAYDREAM_INTEGRATION.md`](./docs/DAYDREAM_INTEGRATION.md) - WHIP, WebRTC, playback setup
+- [`docs/DAYDREAM_API_GUIDE.md`](./docs/DAYDREAM_API_GUIDE.md) - Full API reference
 
-6. **Clip Upload** (recording.ts):
-   - Request pre-signed upload URL (`studio-request-upload`)
-   - PUT blob directly to Livepeer upload URL
-   - Poll asset status every 2s (`studio-asset-status`) until ready (max 2min)
-   - Returns `assetId`, `playbackId`, `downloadUrl`
-
-7. **Database Save** (recording.ts):
-   - Look up session ID from stream
-   - Save clip metadata via `save-clip` edge function
-   - Includes prompt, texture, creativity/quality params, duration
-   - Navigate to clip page
-
-8. **Share & Reward** (ClipView.tsx):
-   - Share to X/Twitter with preset text
-   - Generate unique coffee ticket code
-   - Interactive ticket redemption:
-     - First-time instructions modal (localStorage tracked)
-     - 5-second lock to prevent accidental redemption
-     - Swipe-down gesture to redeem (bartender validates)
-     - Visual feedback: opacity/scale animations, bouncing indicator
-     - Redeemed state: Shows "Already Redeemed" with "Create New Clip" CTA
-     - Loads redemption status on page load
+**Recording → Share Flow** (see [`docs/RECORDING_IMPLEMENTATION.md`](./docs/RECORDING_IMPLEMENTATION.md) for details):
+- Capture video → Upload to Livepeer → Save metadata → Navigate to clip page
+- Share to X/Twitter → Generate coffee ticket → Interactive swipe-to-redeem
 
 ### Authentication Flow
 
-- **Email OTP** (magic link):
-  1. User enters email → `supabase.auth.signInWithOtp()`
-  2. Custom email via `send-auth-email` function (Resend)
-  3. User enters 6-digit code or clicks magic link
-  4. Session stored in localStorage (Supabase client config)
+Two modes: **Anonymous** (instant access) + **Email OTP** (for coffee tickets)
+
+**Quick Summary**:
+- Anonymous: One-click → instant access → optional email later
+- Email OTP: Magic link with 6-digit code verification
+- Sessions persist in localStorage
+
+**Details**: See [`docs/ANONYMOUS_AUTH.md`](./docs/ANONYMOUS_AUTH.md) for flows, migration details, and implementation
 
 ### Routing
 
@@ -218,32 +238,22 @@ These are **non-negotiable** technical requirements:
 
 ## 🔌 External APIs
 
-### Daydream API
-- **Base URL**: `https://api.daydream.live`
-- **Endpoints**:
-  - `POST /v1/streams` - Create stream (body: `{pipeline_id}`)
-  - `PATCH /v1/streams/:id` - Update stream params (body: `{params: {...}}`)
-- **Auth**: Bearer token (`DAYDREAM_API_KEY`)
-- **Key fields**: `pipeline_id`, `prompt`, `t_index_list`, `controlnets`, `model_id`
-- **Hot-swappable params**: `prompt`, `num_inference_steps`, `t_index_list`, `seed`, `controlnets[*].conditioning_scale`
+**Daydream API** (AI streaming):
+- Base: `https://api.daydream.live`
+- Endpoints: `POST /v1/streams`, `PATCH /v1/streams/:id`
+- All calls proxied through edge functions (key never exposed)
 
-### Livepeer Studio API
-- **Base URL**: `https://livepeer.studio/api`
-- **Endpoints**:
-  - `POST /asset/request-upload` - Get pre-signed upload URL
-  - `GET /asset/:id` - Check asset status
-  - `PUT {uploadUrl}` - Direct upload (from pre-signed URL)
-- **Auth**: Bearer token (`LIVEPEER_STUDIO_API_KEY`)
-- **Playback**:
-  - WebRTC: `https://livepeer.studio/webrtc/{playbackId}`
-  - HLS: `https://livepeer.studio/hls/{playbackId}/index.m3u8`
-  - **Note**: Daydream playback IDs don't work with `getSrc()` helper, must construct manually
+**Livepeer Studio API** (clip upload):
+- Base: `https://livepeer.studio/api`
+- Endpoints: Upload, asset status, playback
+- All calls proxied through edge functions
 
-### Supabase Edge Functions
-All functions have `verify_jwt: false` (public access)
-- CORS enabled for all functions
-- Service role key for server operations
-- Error responses include hints for debugging
+**Supabase Edge Functions**:
+- All have `verify_jwt: false` (public access for event simplicity)
+- CORS enabled
+- Service role key for DB operations
+
+**API Details**: See [`docs/DAYDREAM_API_GUIDE.md`](./docs/DAYDREAM_API_GUIDE.md) for comprehensive API reference
 
 ## 🎮 User Interactions
 
@@ -260,24 +270,13 @@ All functions have `verify_jwt: false` (public access)
 - Randomly assigns prompt based on camera type on stream start
 
 ### Recording Mechanics
-- **Desktop**: Click to start, click to stop (toggle mode)
-- **Mobile**: Press and hold to record, release to stop
-- **Duration**: 3-10s enforced
-  - Auto-stop at 10 seconds
-  - Cancel if released before 3 seconds (shows toast)
-- **Real-time counter**: Updates every 100ms during recording
-- **Button states**:
-  - Disabled when stream not playing
-  - "Starting stream..." when loading
-  - "Hold to Brew" / "Tap to Brew" when ready
-  - "Recording... (X.Xs)" during capture
-- **Enabled only when playing**: Listens to video `playing`/`pause`/`waiting` events
-- **Recording technique**:
-  - `videoElement.captureStream()` captures rendered video frames from Livepeer Player
-  - `MediaRecorder` with 100ms timeslice records to WebM
-  - Collects chunks in memory, creates blob on stop
-  - Captures AI-processed output (not original camera feed)
-  - Recording captures naturally mirrored output (mirroring applied at source, not via CSS)
+- **Platform-specific UX**: Desktop (click toggle) vs Mobile (press & hold)
+- **Duration enforcement**: 3-10s (auto-stop at 10s, cancel if <3s)
+- **Real-time feedback**: Counter updates every 100ms, button states reflect stream status
+- **What gets recorded**: AI-processed output from Livepeer Player (not original camera feed)
+- **How**: `videoElement.captureStream()` → `MediaRecorder` → WebM blob
+
+**Full Details**: See [`docs/RECORDING_IMPLEMENTATION.md`](./docs/RECORDING_IMPLEMENTATION.md)
 
 ### Prompt Customization
 - **Debounced updates**: 500ms delay on input change
@@ -383,33 +382,25 @@ SUPABASE_SERVICE_ROLE_KEY=...
 - Import and use with custom classes
 
 ### Recording Implementation Pattern
-**File**: `src/lib/recording.ts` (VideoRecorder class)
+
+**Core Flow**: `VideoRecorder` class → Livepeer upload → Database save
 
 ```typescript
-// 1. Create recorder from video element
+// Quick example (see docs/RECORDING_IMPLEMENTATION.md for full details)
 const recorder = new VideoRecorder(videoElement);
-
-// 2. Start recording (captures MediaStream)
 await recorder.start();
-
-// 3. Stop recording (returns blob + duration)
 const { blob, durationMs } = await recorder.stop();
-
-// 4. Upload to Livepeer (3-step process)
-const { assetId, playbackId, downloadUrl } = await uploadToLivepeer(blob, filename);
-// - Requests pre-signed upload URL
-// - PUTs blob directly to URL
-// - Polls asset status until ready
-
-// 5. Save to database
-const clip = await saveClipToDatabase({ assetId, playbackId, ... });
+const { assetId, playbackId } = await uploadToLivepeer(blob);
+await saveClipToDatabase({ assetId, playbackId, ... });
 ```
 
-**Key implementation notes**:
-- `captureStream()` must be called on actual `<video>` DOM element (not iframe)
-- Front camera mirroring: Canvas-based stream manipulation before sending to Daydream (mirrors at source, not CSS)
-- Recording captures AI-processed output, not original camera feed
-- WebM format with 100ms timeslice, max 2min polling for asset processing
+**Key Quirks**:
+- Uses `captureStream()` on `<video>` element (not iframe - Livepeer Player renders to video)
+- Front camera mirroring at source (canvas-based) before Daydream, not CSS
+- Records AI output, not camera feed
+- Desktop: click-toggle, Mobile: press-hold (UX choice)
+
+**Full Documentation**: See [`docs/RECORDING_IMPLEMENTATION.md`](./docs/RECORDING_IMPLEMENTATION.md)
 
 ## 🎯 Key Business Logic
 
@@ -470,19 +461,15 @@ Processing: creating clip via Livepeer
 
 ### Prompt Update Flow
 ```
-User types → setState → useEffect (500ms debounce) → updatePrompt()
-                                                      ↓
-                                    supabase.functions.invoke('daydream-prompt')
-                                                      ↓
-                                          Daydream API updates stream
-                                                      ↓
-                                              Video effect changes
-
-Note: Initial stream creation uses background initialization via edge function.
-Prompt updates are blocked for 3 seconds after stream creation to prevent
-conflicts with the background initialization. After 3 seconds, a forced sync
-updates the stream with current UI state to ensure consistency.
+User types → 500ms debounce → Edge function → Daydream API → Video effect changes
 ```
+
+**Key Timing**:
+- 3-second initialization window blocks updates (prevents race with background init)
+- After 3s: forced sync ensures UI state matches stream state
+- Debounced updates prevent API spam
+
+**Details**: See [`docs/DAYDREAM_INTEGRATION.md`](./docs/DAYDREAM_INTEGRATION.md) for timing diagrams
 
 ## 🎨 UI/UX Patterns
 
@@ -554,136 +541,73 @@ navigate('/path');
 
 ## 🐛 Known Issues & Workarounds
 
+> **Note**: This section preserves historical context about quirks and decisions. For current implementation details, see `docs/` folder.
+
 ### Stream Not Ready on Initialization (✅ RESOLVED)
-**Issue**: When creating a Daydream stream, attempting to update parameters immediately would fail with "Stream not ready yet" error. This blocked camera initialization and left users with a black screen.
+**The Problem**: Stream creation → immediate param update = "Stream not ready yet" error → black screen
 
-**Root Cause**: 
-- Daydream API's POST `/v1/streams` only accepts `pipeline_id` parameter
-- Initial parameters (prompt, t_index_list, etc.) must be sent via separate PATCH request
-- Stream needs time to initialize before accepting parameter updates
+**Why It Happened**: Daydream API's `POST /v1/streams` only accepts `pipeline_id`. Params must come via separate `PATCH` after initialization window.
 
-**Solution** (`supabase/functions/daydream-stream/index.ts`):
-Edge function now handles both stream creation AND parameter initialization:
-1. **Single client call**: Client passes `initialParams` to edge function
-2. **Server-side retry**: Edge function handles 10 retries with 1-second intervals for "not ready" errors
-3. **Non-blocking**: Edge function returns immediately, params update in background
-4. **Graceful degradation**: If param update fails, stream continues with defaults
+**The Fix**: Edge function handles retry logic server-side (10 retries @ 1s intervals) + non-blocking background param update
 
-```typescript
-// Client: One simple call
-const stream = await createDaydreamStream(initialParams);
+**Current Behavior**: Camera shows immediately (~2-3s), params apply in background. No user-facing errors.
 
-// Edge function: Handles create + param init with retry
-POST /v1/streams → PATCH /v1/streams/:id (with retry)
-```
-
-**Impact**: 
-- Camera shows video feed immediately (~2-3 seconds)
-- Stream parameters applied within 1-2 seconds (background)
-- No more "Stream not ready yet" errors visible to user
-- Cleaner architecture: retry logic centralized in edge function
+**Details**: See `supabase/functions/daydream-stream/index.ts` and [`docs/DAYDREAM_INTEGRATION.md`](./docs/DAYDREAM_INTEGRATION.md)
 
 ### Camera Mirroring (✅ RESOLVED)
-**Solution**: Mirror the MediaStream **at the source** before sending to Daydream:
-- Original camera stream → Canvas with `scaleX(-1)` → `captureStream(30)` → Mirrored MediaStream
-- Mirrored stream sent to Daydream via WHIP
-- Daydream processes already-mirrored input
-- Output is naturally mirrored (no CSS transforms needed)
-- **Benefits**:
-  - Loading spinners and text remain readable (not flipped)
-  - Recording captures correctly mirrored video
-  - Works consistently across all browsers
+**Why**: Front camera should show "mirror" view (natural selfie mode)
 
-### ICE Gathering Delay / Slow WHIP Startup (✅ RESOLVED)
-**Issue**: WHIP request was delayed by 40+ seconds waiting for ICE gathering to complete. Single STUN server (`stun.l.google.com:19302`) was slow/timing out.
+**The Fix**: Mirror at source, not CSS - Canvas `scaleX(-1)` → `captureStream()` → send mirrored stream to Daydream
 
-**Solution** (`src/lib/daydream.ts`):
-```typescript
-const pc = new RTCPeerConnection({
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-  ],
-  iceCandidatePoolSize: 3,
-});
+**Why Not CSS**: Keeps loading spinners/text readable, recording captures correctly, consistent across browsers
 
-// Add 2-second timeout for ICE gathering
-const ICE_TIMEOUT = 2000;
-await Promise.race([iceGatheringPromise, timeoutPromise]);
-```
+### ICE Gathering Delay (✅ RESOLVED)
+**The Problem**: WHIP took 40+ seconds to start (single STUN server timeout)
 
-**Impact**: WHIP startup reduced from 40+ seconds to ~2-3 seconds
-- Multiple STUN servers provide redundancy
-- Timeout prevents indefinite waiting
-- `iceCandidatePoolSize: 3` pre-gathers candidates faster
-- WebRTC works fine with partial candidates
+**The Fix**: Multiple STUN servers + 2-second timeout + `iceCandidatePoolSize: 3`
+
+**Current Behavior**: WHIP starts in ~2-3 seconds
+
+**Details**: See `src/lib/daydream.ts`
 
 ### Daydream Playback IDs Not Recognized
-**Issue**: `getSrc()` from `@livepeer/react/external` returns `null` for Daydream playback IDs.
+**The Problem**: Livepeer's `getSrc()` helper doesn't recognize Daydream playback IDs
 
-**Workaround**: Manually construct src array with WebRTC and HLS URLs:
-```typescript
-const src = [
-  { src: `https://livepeer.studio/webrtc/${playbackId}`, mime: 'video/h264', type: 'webrtc' },
-  { src: `https://livepeer.studio/hls/${playbackId}/index.m3u8`, mime: 'application/vnd.apple.mpegurl', type: 'hls' }
-];
-```
+**The Workaround**: Manually construct src array (see `src/pages/Capture.tsx`)
+
+**Why**: Daydream uses custom playback ID format not in Livepeer's registry
 
 ### Missing Edge Function Configs (✅ RESOLVED)
-**Issue**: Edge functions `studio-request-upload`, `studio-asset-status`, and `save-clip` were missing from `supabase/config.toml`, causing 404 errors.
+**The Problem**: Edge functions returned 404s
 
-**Solution**: Added all functions to config with `verify_jwt = false`:
-```toml
-[functions.studio-request-upload]
-verify_jwt = false
+**The Fix**: Added missing functions to `supabase/config.toml` with `verify_jwt = false`
 
-[functions.studio-asset-status]
-verify_jwt = false
+### Video `object-fit: cover` Issues (✅ RESOLVED)
+**The Problem**: Video wouldn't fill square container properly
 
-[functions.save-clip]
-verify_jwt = false
-```
-
-**Impact**: Clip upload/save flow now works correctly.
-
-### Video `object-fit: cover` Issues
-**Issue**: Getting video to properly fill square container with `object-fit: cover` proved challenging with complex CSS/player interactions.
-
-**Status**: Resolved by peer. May require specific CSS targeting of Livepeer Player internal elements.
+**The Fix**: CSS targeting Livepeer Player internal elements (resolved by peer)
 
 ### Params Updating Logic Bugs (✅ RESOLVED)
-**Issues**: Multiple bugs in stream initialization and parameter updates:
-1. Stream always started with default psychedelic effect (not the prompt from camera selection)
-2. Sometimes showed loading state as if model_id changed (Daydream trying to load sdturbo default)
-3. Pipeline running on non-SDXL nodes (wrong pipeline_id)
+**The Problems**:
+1. Stream started with wrong prompt (default psychedelic, not camera selection)
+2. Random loading states (Daydream model reloads)
+3. Wrong pipeline nodes (non-SDXL)
 
 **Root Causes**:
-- `POST /v1/streams` API only accepts `pipeline_id` (no other params allowed)
-- No initial prompt update was being sent after stream creation
-- Pipeline ID was incorrect: using edge function default `pip_qpUgXycjWF6YMeSL` instead of correct `pip_SDXL-turbo`
-- If `model_id` omitted from any param update, Daydream tries to reload default model
-- `ip_adapter` must always be specified (even if disabled) per Daydream API requirements
+- `POST /v1/streams` only accepts `pipeline_id` (no params)
+- Wrong pipeline_id used
+- `model_id` must ALWAYS be in param updates (else Daydream reloads default)
+- `ip_adapter` must ALWAYS be specified (even if disabled)
 
-**Solutions** (`src/lib/daydream.ts` + `src/pages/Capture.tsx` + edge functions):
-1. Fixed pipeline_id to `'pip_SDXL-turbo'` (correct SDXL pipeline)
-2. Fixed API endpoint: Changed from `POST /beta/streams/:id/prompts` to `PATCH /v1/streams/:id`
-3. Fixed body structure: Send `{params: {...}}` directly, not wrapped in `{model_id, pipeline, params}`
-4. Modified `createDaydreamStream()` to accept `initialParams` 
-5. After creating stream, immediately call `updateDaydreamPrompts()` with initial params:
-   - `model_id`: Always set to `'stabilityai/sdxl-turbo'`
-   - `prompt`: Use selected random prompt based on camera type
-   - `t_index_list`: Calculate from initial creativity/quality values
-   - `controlnets`: Specify all SDXL controlnets with conditioning scales
-   - `ip_adapter`: Always include even when disabled (set `enabled: false`)
-6. Added critical comments to always include `model_id` in param updates
-7. Ensured `ip_adapter` always specified in updates (even if disabled)
+**The Fix**:
+- Use correct pipeline: `pip_SDXL-turbo`
+- Use correct endpoint: `PATCH /v1/streams/:id` with `{params: {...}}`
+- Always include `model_id` and `ip_adapter` in updates
+- Initialize params immediately after stream creation
 
-**Impact**: 
-- Pipeline now runs on correct SDXL nodes
-- Stream starts immediately with correct prompt/effect
-- No more loading/model reload issues during param updates
-- Consistent behavior across all parameter changes
+**Current Behavior**: Stream starts with correct prompt, no spurious reloads
+
+**Critical Pattern**: See code comments in `src/lib/daydream.ts` - always include `model_id` in updates!
 
 ## 📝 Coding Conventions
 
@@ -713,16 +637,23 @@ verify_jwt = false
 
 ## 🔄 Update Triggers
 
-**When to update VIBEME.md**:
+**Update VIBEME.md when**:
 - [ ] New major features (e.g., add recording playback)
 - [ ] Architecture changes (e.g., add state management library)
 - [ ] New API integrations (e.g., add payment system)
 - [ ] Database schema changes (new tables/fields)
 - [ ] Design system updates (new colors, patterns)
 - [ ] Workflow changes (new user flows)
+- [ ] Project structure changes (new folders/modules)
 
-**Do NOT update for**:
-- Minor bug fixes
+**Create a doc in `docs/` when**:
+- [ ] Implementing complex feature (step-by-step guide)
+- [ ] Integration requires detailed API documentation
+- [ ] Debugging complex issues (preserve learnings)
+- [ ] Low-level implementation details agents need
+
+**Do NOT update VIBEME for**:
+- Minor bug fixes (unless they reveal architectural quirks)
 - Copy/text changes
 - Individual component updates
 - CSS tweaks
@@ -732,28 +663,46 @@ verify_jwt = false
 
 ### When receiving high-level prompts:
 
-1. **Read VIBEME.md first** for context
-2. **Check existing patterns** before inventing new ones
-3. **Reuse UI components** from shadcn/ui library
-4. **Follow dark theme** with purple/cyan accents
-5. **Use Supabase** for all backend operations
-6. **Add error handling** with toast notifications
-7. **Test with TypeScript** (but don't let types block you)
-8. **Update VIBEME.md** if you make architectural changes
+1. **Read VIBEME.md first** - Get overall context and architecture
+2. **Check `docs/` folder** - Find detailed guides for specific features
+3. **Check existing patterns** - Don't reinvent, follow established conventions
+4. **Reuse UI components** - shadcn/ui library has what you need
+5. **Follow constraints** - See "Hard Constraints" section
+6. **Update appropriately**:
+   - VIBEME.md → Architectural changes only
+   - `docs/` → Detailed implementation guides
+
+### Finding What You Need
+
+**"How does [feature] work?"**:
+- Check VIBEME.md for high-level overview
+- Look in `docs/` for detailed implementation guide
+- Read the actual code in `src/lib/` or relevant component
+
+**"Where is [functionality]?"**:
+- Check "Project Structure" section for file locations
+- `src/lib/` for core utilities (daydream, recording)
+- `src/pages/` for main UI components
+- `supabase/functions/` for API proxies
+
+**"Why is [thing] done this way?"**:
+- Check "Known Issues & Workarounds" for historical context
+- Check git history for the relevant file
+- Look for comments in code explaining quirks
 
 ### Common Agent Tasks:
 
 **"Add a new field to clips"**:
-→ Update migration → Regenerate types → Update ClipView/Capture → Update VIBEME
+→ Update migration → Regenerate types → Update ClipView/Capture → Update VIBEME (schema section)
 
 **"Change the UI of X"**:
-→ Check design system colors → Use existing shadcn components → Follow responsive patterns
+→ Check design system → Use shadcn components → Follow responsive patterns
 
-**"Add analytics"**:
-→ Create new edge function → Update relevant pages → Add to supabase config
+**"Fix Daydream integration issue"**:
+→ Read `docs/DAYDREAM_API_GUIDE.md` → Check `src/lib/daydream.ts` → Verify edge function logs
 
-**"Fix video not loading"**:
-→ Check WebRTC flow → Verify API keys → Check CORS → Look at console logs
+**"Understand recording flow"**:
+→ Read `docs/RECORDING_IMPLEMENTATION.md` → Check `src/lib/recording.ts`
 
 ## 🌟 Project Vibe
 
@@ -772,10 +721,17 @@ Avoid:
 
 ## 📚 Reference Quick Links
 
-- **Daydream Docs**: Pipeline configs, prompt formats, texture handling
-- **Livepeer Docs**: Clip API, asset statuses, playback URLs
-- **Supabase Docs**: RLS policies, edge function patterns, auth flows
-- **shadcn/ui Docs**: Component APIs, styling patterns
+**Internal Documentation**:
+- [`docs/DAYDREAM_API_GUIDE.md`](./docs/DAYDREAM_API_GUIDE.md) - Complete API reference
+- [`docs/DAYDREAM_INTEGRATION.md`](./docs/DAYDREAM_INTEGRATION.md) - Integration guide
+- [`docs/RECORDING_IMPLEMENTATION.md`](./docs/RECORDING_IMPLEMENTATION.md) - Video capture guide
+- [`docs/ANONYMOUS_AUTH.md`](./docs/ANONYMOUS_AUTH.md) - Auth flow details
+
+**External Documentation**:
+- [Daydream API](https://docs.daydream.live) - Official Daydream docs
+- [Livepeer Studio](https://docs.livepeer.org) - Clip API, playback
+- [Supabase](https://supabase.com/docs) - Auth, edge functions, RLS
+- [shadcn/ui](https://ui.shadcn.com) - Component library
 
 ## 🔗 VIBEME ↔ PRD Cross-Reference
 
@@ -850,22 +806,28 @@ Avoid:
 
 ---
 
-**Last Updated**: 2025-10-11
-- Fixed stream initialization race condition: moved retry logic to edge function for cleaner architecture
-- Camera now starts immediately while params update in background (no more black screen or "Stream not ready yet" errors)
-- Fixed critical params updating logic bugs: stream now starts with correct prompt (via immediate post-creation prompt update) and no model reload issues
-- **Fixed prompt update race condition (✅ RESOLVED)**: Added 3-second initialization period to prevent prompt updates from interfering with background initialization. Stream now correctly starts with selected prompt and stays with it until user makes changes.
-- **Fixed parameter sync issue (✅ RESOLVED)**: Added forced parameter sync after 3-second initialization completes. This ensures UI state is always applied to the stream even if user hasn't changed any values. Also fixed controlnets to always be included (with proper depth conditioning scale) for consistent stream behavior.
-- Canvas-based mirroring at source for natural selfie mode
-- Interactive ticket redemption with swipe-to-validate UX
-- Fixed ICE gathering delay (40s → 2s) with STUN redundancy + timeout
-- Fixed missing edge function configs causing 404 errors
-- Fixed React hook dependency issues in auto-start flow
-- Expanded default prompts: 14 front camera (portraits) + 15 back camera (scenes) with trippy/artistic styles
-- **Privacy fix**: Auto-stop camera/audio streams when user leaves tab (Page Visibility API)
-  - Streams stop immediately when tab hidden (safest for privacy)
-  - Auto-restart if user returns after >5s (shows loading state)
-  - If <5s away, no auto-restart (user must manually restart)
+**Last Updated**: 2025-10-12
+
+**Recent Changes**:
+- **Documentation restructure**: Moved detailed implementation docs to `docs/` folder
+- **VIBEME refactor**: Now focuses on high-level architecture and quirks, points to `docs/` for details
+- All critical fixes documented in "Known Issues & Workarounds" section
+- Added Quick Navigation Guide for agents
+
+**Historical Fixes** (see "Known Issues & Workarounds" for details):
+- Stream initialization race condition → Edge function retry logic
+- Camera mirroring → Canvas-based source transformation
+- ICE gathering delay → Multiple STUN servers + timeout
+- Params updating bugs → Correct pipeline, always include `model_id`
+- Privacy → Auto-stop streams when tab hidden
+
+---
+
 **Project Status**: Active development for Livepeer × Daydream Summit (Brewdream)
-**Maintainer Note**: Keep this file concise but comprehensive. Every section should answer "what do I need to know to work on this?" Always check PRD for feature requirements before implementing.
+
+**Maintainer Guidelines**:
+- **VIBEME.md** → High-level architecture, historical quirks, navigation map
+- **`docs/` folder** → Detailed implementation guides, API references, troubleshooting
+- **PRD.md** → Product requirements and acceptance criteria (don't modify without product approval)
+- Every section should answer: "What do I need to know?" and "Where do I find details?"
 
