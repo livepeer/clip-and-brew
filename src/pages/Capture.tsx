@@ -848,7 +848,11 @@ export default function Capture() {
         blob,
         filename,
         (progress) => {
-          setUploadProgress(progress.step || progress.phase);
+          if (progress.phase === 'processing' && progress.progress !== undefined) {
+            setUploadProgress(`Processing: ${Math.round(progress.progress)}%`);
+          } else {
+            setUploadProgress(progress.step || progress.phase);
+          }
         }
       );
 
