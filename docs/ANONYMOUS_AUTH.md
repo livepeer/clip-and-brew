@@ -109,6 +109,8 @@ await supabase.auth.signInWithOtp({ email });
 
 Supabase links the email to the same `user.id`, preserving all data!
 
+**IMPORTANT**: The user record in the `users` table is only created AFTER successful OTP verification, not when the OTP is sent. This prevents conflict errors with the unique email constraint.
+
 ### Database Queries
 
 **Anonymous users:**
@@ -164,6 +166,53 @@ SELECT * FROM users WHERE email = 'user@example.com';
 - No special privileges for anonymous vs authenticated
 - RLS policies apply to all users equally
 
+## Email Configuration
+
+For OTP emails to be sent, you need to configure the Supabase Auth Email Hook:
+
+### 1. Set Environment Variables in Supabase
+
+In your Supabase project dashboard, go to Settings → Edge Functions and set:
+```bash
+RESEND_API_KEY=re_your_resend_api_key
+SEND_EMAIL_HOOK_SECRET=your_webhook_secret
+SUPABASE_URL=https://your-project.supabase.co
+```
+
+### 2. Configure Auth Email Hook
+
+In Supabase Dashboard → Authentication → Email Templates:
+1. Enable "Custom SMTP" or configure webhook
+2. Set webhook URL to: `https://your-project.supabase.co/functions/v1/send-auth-email`
+3. Set webhook secret to match `SEND_EMAIL_HOOK_SECRET`
+4. Enable "Send OTP emails via hook"
+
+### 3. Verify Configuration
+
+Test by:
+1. Going to /login
+2. Entering an email
+3. Checking logs in Supabase Functions dashboard
+4. Checking Resend dashboard for sent emails
+
+## Recent Fixes (2025-10-13)
+
+### Fixed: Conflict Error on Email Registration
+
+**Problem**: When adding an email, users were getting "A user with this email address has already been registered" error, even for new users.
+
+**Root Cause**: The `handleSendOtp` function was trying to create a user record in the `users` table BEFORE sending the OTP, which caused a conflict if:
+- The user already existed but wasn't verified
+- The user was attempting to re-verify
+
+**Solution**: 
+1. Removed the premature `upsert` to the `users` table from `handleSendOtp`
+2. User record is now only created in `handleVerifyOtp` AFTER successful verification
+3. Added logic to check if user exists and show appropriate messaging
+4. Supabase Auth automatically handles resending OTPs for unverified users
+
+**Code Location**: `src/components/Login.tsx` lines 76-130
+
 ## Future Enhancements
 
 - Show "You're browsing anonymously" badge in UI
@@ -173,6 +222,7 @@ SELECT * FROM users WHERE email = 'user@example.com';
 
 ---
 
-**Implementation Date:** 2025-10-09
-**Supabase Version:** Uses built-in anonymous auth
+**Implementation Date:** 2025-10-09  
+**Last Updated:** 2025-10-13 (Fixed email conflict error)  
+**Supabase Version:** Uses built-in anonymous auth  
 **Compatible with:** All existing features (clips, sessions, tickets, gallery)

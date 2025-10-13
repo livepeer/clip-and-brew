@@ -78,6 +78,13 @@ export function Login() {
     setLoading(true);
 
     try {
+      // Check if user exists in our users table (indicates they've verified before)
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', email)
+        .single();
+
       // If user is anonymous, we need to link their account
       if (isAnonymous) {
         // Update the anonymous user's email
@@ -85,16 +92,8 @@ export function Login() {
         if (updateError) throw updateError;
       }
 
-      // Store or update user in our custom users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .upsert({ email }, { onConflict: 'email' })
-        .select()
-        .single();
-
-      if (userError) throw userError;
-
       // Send magic link (OTP via email)
+      // Supabase automatically handles resending for unverified users
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
@@ -105,10 +104,20 @@ export function Login() {
       if (error) throw error;
 
       setOtpSent(true);
-      toast({
-        title: 'Check your email',
-        description: 'We sent you a login code',
-      });
+      
+      // Show different message if user exists (indicates resend scenario)
+      if (existingUser) {
+        toast({
+          title: 'Check your email',
+          description: 'We sent you a login code',
+        });
+      } else {
+        // New user or unverified user from a previous attempt
+        toast({
+          title: 'Check your email',
+          description: 'We sent you a verification code. If you already have an account, we resent your code.',
+        });
+      }
     } catch (error: any) {
       toast({
         title: 'Error',
