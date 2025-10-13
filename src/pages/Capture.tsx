@@ -173,6 +173,7 @@ export default function Capture() {
   const [showSlowLoadingMessage, setShowSlowLoadingMessage] = useState(false);
   const [uploadingClip, setUploadingClip] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [lastDisplayedProgress, setLastDisplayedProgress] = useState<number>(0);
   const [micEnabled, setMicEnabled] = useState(false);
   const [micPermissionGranted, setMicPermissionGranted] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
@@ -818,6 +819,7 @@ export default function Capture() {
     setRecording(false);
     recordStartTimeRef.current = null;
     setUploadingClip(true);
+    setLastDisplayedProgress(0); // Reset progress tracking
 
     try {
       // Stop the recorder and get the blob
@@ -849,7 +851,15 @@ export default function Capture() {
         filename,
         (progress) => {
           if (progress.phase === 'processing' && progress.progress !== undefined) {
-            setUploadProgress(`Processing: ${Math.round(progress.progress)}%`);
+            // Convert progress to percentage (0-100)
+            const apiProgressPercent = Math.round(progress.progress * 100);
+
+            // Smooth progression: use API value if greater, otherwise increment by 1%
+            setLastDisplayedProgress(prev => {
+              const newProgress = apiProgressPercent > prev ? apiProgressPercent : Math.min(prev + 1, 100);
+              setUploadProgress(`Processing: ${newProgress}%`);
+              return newProgress;
+            });
           } else {
             setUploadProgress(progress.step || progress.phase);
           }
@@ -907,6 +917,7 @@ export default function Capture() {
     } finally {
       setUploadingClip(false);
       setUploadProgress('');
+      setLastDisplayedProgress(0);
     }
   };
 
