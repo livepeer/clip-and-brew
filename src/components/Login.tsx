@@ -42,16 +42,12 @@ export function Login() {
       const { data, error } = await supabase.auth.signInAnonymously();
       if (error) throw error;
 
-      // Best-effort background upsert; do not block navigation/UI
+      // Ensure the app-level user row exists BEFORE redirecting
       if (data.user) {
-        void supabase
+        const { error: insertError } = await supabase
           .from('users')
-          .upsert({ id: data.user.id, email: null }, { onConflict: 'id' })
-          .then(({ error: insertError }) => {
-            if (insertError) {
-              console.warn('Non-blocking user upsert failed:', insertError);
-            }
-          });
+          .upsert({ id: data.user.id, email: null }, { onConflict: 'id' });
+        if (insertError) throw insertError;
       }
 
       toast({ title: 'Welcome!', description: 'You can start creating clips right away' });
@@ -91,9 +87,10 @@ export function Login() {
         // Don't throw here, just log the error and continue
       }
 
-      // If user is anonymous, try linking email in background
+      // If user is anonymous, link their account BEFORE sending the email
       if (isAnonymous && currentUserId) {
-        void supabase.auth.updateUser({ email });
+        const { error: updateError } = await supabase.auth.updateUser({ email });
+        if (updateError) throw updateError;
       }
 
       // Send magic link via email
