@@ -312,23 +312,46 @@ export default function Capture() {
 
       // Save session to database
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        // For anonymous users, look up by ID instead of email
-        const query = user.is_anonymous
-          ? supabase.from('users').select('id').eq('id', user.id)
-          : supabase.from('users').select('id').eq('email', user.email);
-
-        const { data: userData } = await query.single();
-
-        if (userData) {
-          await supabase.from('sessions').insert({
-            user_id: userData.id,
-            stream_id: streamData.id,
-            playback_id: streamData.output_playback_id,
-            camera_type: type,
-          });
-        }
+      if (!user) {
+        console.error('[CAPTURE] No authenticated user found');
+        await supabase.auth.signOut();
+        navigate('/login');
+        return;
       }
+
+      // Check if user exists in database
+      const { data: userData, error: userLookupError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .single();
+
+      if (userLookupError || !userData) {
+        console.error('[CAPTURE] User not found in database, clearing auth:', userLookupError);
+        await supabase.auth.signOut();
+        navigate('/login');
+        return;
+      }
+
+      console.log('[CAPTURE] Creating session:', {
+        user_id: userData.id,
+        stream_id: streamData.id,
+        playback_id: streamData.output_playback_id
+      });
+
+      const { error: sessionError } = await supabase.from('sessions').insert({
+        user_id: userData.id,
+        stream_id: streamData.id,
+        playback_id: streamData.output_playback_id,
+        camera_type: type,
+      });
+
+      if (sessionError) {
+        console.error('[CAPTURE] Error creating session:', sessionError);
+        throw new Error(`Failed to create session: ${sessionError.message}`);
+      }
+
+      console.log('[CAPTURE] Session created successfully');
     } catch (error: unknown) {
       console.error('Error initializing stream:', error);
       toast({
@@ -748,7 +771,7 @@ export default function Capture() {
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    
+
     // Clean up
     setTimeout(() => {
       document.body.removeChild(a);
@@ -832,11 +855,16 @@ export default function Capture() {
       console.log('Upload complete, saving to database...');
 
       // Get session ID
-      const { data: sessionData } = await supabase
+      const { data: sessionData, error: sessionError } = await supabase
         .from('sessions')
         .select('id')
         .eq('stream_id', streamId)
         .single();
+
+      if (sessionError) {
+        console.error('Session query error:', sessionError, { streamId });
+        throw new Error(`Session not found: ${sessionError.message}`);
+      }
 
       if (!sessionData) {
         throw new Error('Session not found');

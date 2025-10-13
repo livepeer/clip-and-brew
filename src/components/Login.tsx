@@ -43,12 +43,17 @@ export function Login() {
 
       // Store anonymous user in users table (no email)
       if (data.user) {
-        await supabase
+        const { error: insertError } = await supabase
           .from('users')
           .upsert({
             id: data.user.id,
             email: null
           }, { onConflict: 'id' });
+
+        if (insertError) {
+          console.error('Failed to create user record:', insertError);
+          throw new Error(`Failed to create user record: ${insertError.message}`);
+        }
       }
 
       toast({
@@ -166,10 +171,10 @@ export function Login() {
             <img src="/daydream-logo.svg" alt="Daydream" className="h-8 w-auto" />
             <h2 className="text-xl font-bold text-foreground">Brewdream</h2>
           </Link>
-  
+
           <div className="text-center bg-neutral-950 shadow-lg shadow-[0_0_15px_2px_theme(colors.neutral.800/0.4)] border border-neutral-800 rounded-3xl p-6">
-       
-  
+
+
             <h1 className="text-3xl font-bold mb-2">
               {otpSent ? 'Enter code' : isAnonymous ? 'Add your email' : 'Sign in'}
             </h1>
@@ -193,7 +198,7 @@ export function Login() {
                   >
                     {loading ? 'Loading...' : 'Continue without email'}
                   </Button>
-  
+
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
                       <span className="w-full border-t border-border" />
@@ -204,7 +209,7 @@ export function Login() {
                   </div>
                 </>
               )}
-  
+
               <form onSubmit={handleSendOtp} className="space-y-4">
                 <Input
                   type="email"
