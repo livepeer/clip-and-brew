@@ -3,6 +3,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import fixWebmDuration from 'fix-webm-duration';
 
 interface RecordingResult {
   blob: Blob;
@@ -115,25 +116,39 @@ export class VideoRecorder {
     });
 
     const durationMs = Date.now() - this.startTime;
-    
+
     // Ensure we have chunks
     if (this.chunks.length === 0) {
       throw new Error('No video data recorded - the recording may have failed');
     }
 
     // Create blob with explicit type
-    const blob = new Blob(this.chunks, { type: this.mimeType || 'video/webm' });
+    let blob = new Blob(this.chunks, { type: this.mimeType || 'video/webm' });
 
-    console.log('Recording stopped:', { 
-      durationMs, 
-      size: blob.size, 
+    console.log('Recording stopped (before duration fix):', {
+      durationMs,
+      size: blob.size,
       type: blob.type,
-      chunks: this.chunks.length 
+      chunks: this.chunks.length
     });
 
     // Validate blob size (should be at least 1KB for a valid video)
     if (blob.size < 1000) {
       throw new Error(`Recording too small (${blob.size} bytes) - video may be corrupted`);
+    }
+
+    // Fix WebM duration metadata to ensure proper processing by Catalyst/MediaConvert
+    // This adds the duration field that's missing when concatenating MediaRecorder chunks
+    try {
+      console.log('Fixing WebM duration metadata...');
+      blob = await fixWebmDuration(blob, durationMs, { logger: false });
+      console.log('WebM duration fixed:', {
+        newSize: blob.size,
+        durationMs
+      });
+    } catch (error) {
+      console.error('Failed to fix WebM duration (proceeding anyway):', error);
+      // Continue with original blob if fixing fails
     }
 
     return { blob, durationMs, mimeType: this.mimeType };
@@ -166,7 +181,7 @@ export async function uploadToLivepeer(
     console.error('Failed to request upload URL:', uploadError);
     throw new Error(`Failed to request upload: ${uploadError.message || 'Unknown error'}`);
   }
-  
+
   if (!uploadData?.uploadUrl || !uploadData?.assetId) {
     console.error('Invalid upload response:', uploadData);
     throw new Error('Failed to get upload URL from server');
@@ -177,14 +192,14 @@ export async function uploadToLivepeer(
   // Step 2: Upload the blob
   const file = new File([blob], filename, { type: blob.type });
 
-  console.log('Uploading blob...', { 
-    size: blob.size, 
+  console.log('Uploading blob...', {
+    size: blob.size,
     type: blob.type,
-    filename 
+    filename
   });
-  
+
   onProgress?.({ phase: 'uploading', step: 'Uploading video...' });
-  
+
   const putResponse = await fetch(uploadData.uploadUrl, {
     method: 'PUT',
     headers: {
@@ -205,9 +220,9 @@ export async function uploadToLivepeer(
   // Step 3: Poll for asset readiness with better error handling
   let attempts = 0;
   const maxAttempts = 300; // 5 minutes max (polling every 1s)
-  let assetData: { 
-    status?: string; 
-    playbackId?: string; 
+  let assetData: {
+    status?: string;
+    playbackId?: string;
     downloadUrl?: string;
     error?: { message?: string };
     progress?: number;
@@ -227,7 +242,7 @@ export async function uploadToLivepeer(
     const status = assetData?.status;
     const progress = assetData?.progress || (attempts / maxAttempts) * 100;
     console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, status, assetData);
-    
+
     // Report progress to caller
     onProgress?.({
       phase: 'processing',
