@@ -24,6 +24,7 @@ interface Clip {
   duration_ms: number;
   created_at: string;
   session_id: string;
+  likes_count: number;
 }
 
 interface Ticket {
@@ -41,10 +42,15 @@ export default function ClipView() {
   const [isRedeemed, setIsRedeemed] = useState(false);
   const [generatingTicket, setGeneratingTicket] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const [likesCount, setLikesCount] = useState(0);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
   const [isSwipeLocked, setIsSwipeLocked] = useState(true);
   const [showInstructionsModal, setShowInstructionsModal] = useState(false);
   const [isRedeeming, setIsRedeeming] = useState(false);
+  const [viewCount, setViewCount] = useState<number | null>(null);
+  const [viewsLoading, setViewsLoading] = useState(true);
   const { toast } = useToast();
   const coffeeCardRef = useRef<HTMLDivElement | null>(null);
   const swipeX = useMotionValue(0);
@@ -54,14 +60,47 @@ export default function ClipView() {
   useEffect(() => {
     loadClip();
     checkAuth();
+    loadViewership();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const checkAuth = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       setIsAuthenticated(!!user);
+      setCurrentUserId(user?.id || null);
     } catch (error) {
       console.error('Error checking auth:', error);
+    }
+  };
+
+  const loadViewership = async () => {
+    try {
+      if (!id) return;
+
+      const { data: clipData } = await supabase
+        .from('clips')
+        .select('asset_playback_id')
+        .eq('id', id)
+        .single();
+
+      if (!clipData?.asset_playback_id) return;
+
+      const { data, error } = await supabase.functions.invoke('get-viewership', {
+        body: { playbackId: clipData.asset_playback_id },
+      });
+
+      if (error) {
+        console.error('Error loading viewership:', error);
+        setViewCount(0);
+      } else {
+        setViewCount(data.viewCount || 0);
+      }
+    } catch (error) {
+      console.error('Error loading viewership:', error);
+      setViewCount(0);
+    } finally {
+      setViewsLoading(false);
     }
   };
 
@@ -75,6 +114,7 @@ export default function ClipView() {
 
       if (error) throw error;
       setClip(data);
+      setLikesCount(data.likes_count || 0);
 
       // Check if user owns this clip and if they have a ticket
       const { data: { user } } = await supabase.auth.getUser();
@@ -86,31 +126,48 @@ export default function ClipView() {
           .single();
 
         if (sessionData) {
-          const { data: ticketData } = await supabase
-            .from('tickets')
-            .select('code, redeemed')
-            .eq('session_id', sessionData.id)
-            .single();
+          // Check ownership
+          const ownsClip = sessionData.user_id === user.id;
+          setIsOwner(ownsClip);
 
-          if (ticketData) {
-            setTicketCode(ticketData.code);
-            setIsRedeemed(ticketData.redeemed);
+          // Only load ticket data if user owns the clip
+          if (ownsClip) {
+            const { data: ticketData } = await supabase
+              .from('tickets')
+              .select('code, redeemed')
+              .eq('session_id', sessionData.id)
+              .single();
 
-            // Start 5-second lock timer only if ticket exists and not redeemed
-            if (!ticketData.redeemed) {
-              setIsSwipeLocked(true);
-              setTimeout(() => {
-                setIsSwipeLocked(false);
-              }, 5000);
+            if (ticketData) {
+              setTicketCode(ticketData.code);
+              setIsRedeemed(ticketData.redeemed);
+
+              // Start 5-second lock timer only if ticket exists and not redeemed
+              if (!ticketData.redeemed) {
+                setIsSwipeLocked(true);
+                setTimeout(() => {
+                  setIsSwipeLocked(false);
+                }, 5000);
+              }
             }
           }
         }
+
+        // Check if user has liked this clip
+        const { data: likeData } = await supabase
+          .from('clip_likes')
+          .select('id')
+          .eq('clip_id', data.id)
+          .eq('user_id', user.id)
+          .single();
+
+        setIsLiked(!!likeData);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error loading clip:', error);
       toast({
         title: 'Error',
-        description: error.message,
+        description: error instanceof Error ? error.message : 'Failed to load clip',
         variant: 'destructive',
       });
     } finally {
@@ -119,8 +176,70 @@ export default function ClipView() {
   };
 
   const handleLike = async () => {
-    setIsLiked(!isLiked);
-    // TODO: Implement like functionality with API route
+    if (!isAuthenticated || !currentUserId) {
+      toast({
+        title: 'Login required',
+        description: 'Please log in to like clips',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!clip) return;
+
+    try {
+      if (isLiked) {
+        // Unlike - optimistic update
+        setIsLiked(false);
+        setLikesCount(prev => Math.max(0, prev - 1));
+
+        const { error } = await supabase
+          .from('clip_likes')
+          .delete()
+          .eq('clip_id', clip.id)
+          .eq('user_id', currentUserId);
+
+        if (error) throw error;
+      } else {
+        // Like - optimistic update
+        setIsLiked(true);
+        setLikesCount(prev => prev + 1);
+
+        const { error } = await supabase
+          .from('clip_likes')
+          .insert({
+            clip_id: clip.id,
+            user_id: currentUserId,
+          });
+
+        if (error) throw error;
+      }
+    } catch (error) {
+      // Revert optimistic update on error
+      setIsLiked(!isLiked);
+      setLikesCount(clip.likes_count);
+
+      console.error('Error toggling like:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to toggle like',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDownload = () => {
+    if (!clip) return;
+
+    const filename = `brewdream-${clip.id.substring(0, 8)}.mkv`;
+    const downloadUrl = `https://vod-cdn.lp-playback.studio/raw/jxf4iblf6wlsyor6526t4tcmtmqa/catalyst-vod-com/hls/${clip.asset_playback_id}/video/${filename}`;
+
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   const shareToTwitter = () => {
@@ -136,7 +255,7 @@ export default function ClipView() {
     setGeneratingTicket(true);
     try {
       const { data, error } = await supabase.functions.invoke('generate-ticket', {
-        body: { sessionId: clip.session_id },
+        body: { clipId: clip.id },
       });
 
       if (error) throw error;
@@ -194,10 +313,10 @@ export default function ClipView() {
         }, 300);
       }
 
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: error.message,
+        description: error instanceof Error ? error.message : 'Failed to generate ticket',
         variant: 'destructive',
       });
     } finally {
@@ -205,7 +324,7 @@ export default function ClipView() {
     }
   };
 
-  const handleDragEnd = async (_event: any, info: PanInfo) => {
+  const handleDragEnd = async (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     const dragThreshold = 100; // pixels
 
     if (isSwipeLocked || isRedeemed || isRedeeming) {
@@ -229,7 +348,7 @@ export default function ClipView() {
     setIsRedeeming(true);
     try {
       const { data, error } = await supabase.functions.invoke('redeem-ticket', {
-        body: { code: ticketCode },
+        body: { ticketCode: ticketCode },
       });
 
       if (error) throw error;
@@ -247,13 +366,19 @@ export default function ClipView() {
         });
       }, 500);
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error redeeming ticket:', error);
       swipeX.set(0);
 
+      const errorMessage = error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error !== null && 'error' in error
+        ? String((error as { error: unknown }).error)
+        : 'Failed to redeem ticket';
+
       toast({
         title: 'Error',
-        description: error.error || error.message || 'Failed to redeem ticket',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -350,29 +475,30 @@ export default function ClipView() {
             >
               <Button variant={isLiked ? "default" : "outline"} size="lg" onClick={handleLike} className="gap-2">
                 <Heart className={`h-5 w-5 ${isLiked ? "fill-current" : ""}`} />
-                0
+                {likesCount}
               </Button>
 
               <Button variant="outline" size="lg" className="gap-2 bg-transparent">
                 <Eye className="h-5 w-5" />
-                0
+                {viewsLoading ? '-' : viewCount}
               </Button>
 
               <Button variant="outline" size="lg" onClick={shareToTwitter} className="gap-2 bg-transparent">
                 <Share2 className="h-5 w-5" />
               </Button>
 
-              <Button variant="outline" size="lg" className="gap-2 bg-transparent">
+              <Button variant="outline" size="lg" onClick={handleDownload} className="gap-2 bg-transparent">
                 <Download className="h-5 w-5" />
               </Button>
             </motion.div>
-            {/* Coffee Ticket Section */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4, duration: 0.4 }}
-            >
-              {ticketCode && !isRedeemed ? (
+            {/* Coffee Ticket Section - Only visible to clip owner */}
+            {isOwner && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4, duration: 0.4 }}
+              >
+                {ticketCode && !isRedeemed ? (
                 <>
                   {/* Always-visible instructions */}
                   <div className="mb-3 text-center">
@@ -472,7 +598,8 @@ export default function ClipView() {
                   </div>
                 </div>
               )}
-            </motion.div>
+              </motion.div>
+            )}
 
 
           </div>
