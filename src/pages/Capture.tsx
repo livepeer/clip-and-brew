@@ -870,12 +870,16 @@ export default function Capture() {
         throw new Error('Session not found');
       }
 
-      // Save to database
+      // Save to database (clamp duration to valid range: 3-10s)
+      const clampedDuration = Math.min(Math.max(durationMs, 3000), 10000);
+      if (clampedDuration !== durationMs) {
+        console.log(`Duration clamped: ${durationMs}ms -> ${clampedDuration}ms`);
+      }
       const clip = await saveClipToDatabase({
         assetId,
         playbackId: assetPlaybackId,
         downloadUrl,
-        durationMs,
+        durationMs: clampedDuration,
         sessionId: sessionData.id,
         prompt,
         textureId: selectedTexture,
