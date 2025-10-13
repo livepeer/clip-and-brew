@@ -69,7 +69,7 @@ supabase functions deploy send-auth-email
 
 1. Go to your app's `/login` page
 2. Enter a test email address
-3. Click "Send login code"
+3. Click "Send login link"
 4. Check the following:
 
 **In Supabase Dashboard:**
@@ -82,7 +82,8 @@ supabase functions deploy send-auth-email
 
 **In Your Email Inbox:**
 - Check for an email from "Brewdream <onboarding@resend.dev>"
-- It should contain a 6-digit OTP code
+- It should contain a "Sign in to Brewdream" button
+- Click the button and you should be redirected to `/capture` and logged in
 
 ### Common Issues
 
@@ -104,12 +105,13 @@ supabase functions deploy send-auth-email
 
 #### "A user with this email address has already been registered"
 
-This error should now be fixed! The issue was that the app was trying to create a user record before verification.
+This error should now be fixed! The issue has been resolved with the new flow.
 
 **What was changed:**
-- User records are now only created AFTER successful OTP verification
-- If a user exists but is unverified, Supabase automatically resends the OTP
-- The app shows an appropriate message indicating the code was resent
+- User records are now created IMMEDIATELY with `email_verified=false`
+- After clicking the magic link, the record is updated to `email_verified=true`
+- Prevents conflicts and allows proper resend functionality
+- Supabase Auth handles duplicate email scenarios automatically
 
 ## Email Template Customization
 

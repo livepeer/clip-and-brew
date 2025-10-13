@@ -27,33 +27,22 @@ export const OtpEmail = ({
 }: OtpEmailProps) => (
   <Html>
     <Head />
-    <Preview>Your login code: {token}</Preview>
+    <Preview>Click to sign in to Brewdream</Preview>
     <Body style={main}>
       <Container style={container}>
-        <Heading style={h1}>Your Login Code</Heading>
+        <Heading style={h1}>Sign in to Brewdream</Heading>
         <Text style={text}>
-          Enter this code to log in:
-        </Text>
-        <code style={code}>{token}</code>
-        <Text style={{ ...text, marginTop: '32px', marginBottom: '8px' }}>
-          Or click the link below:
+          Click the button below to sign in to your account:
         </Text>
         <Link
           href={`${supabase_url}/auth/v1/verify?token=${token_hash}&type=${email_action_type}&redirect_to=${redirect_to}`}
           target="_blank"
-          style={link}
+          style={button}
         >
-          Sign in with magic link
+          Sign in to Brewdream
         </Link>
-        <Text
-          style={{
-            ...text,
-            color: '#ababab',
-            marginTop: '32px',
-            marginBottom: '16px',
-          }}
-        >
-          If you didn&apos;t try to login, you can safely ignore this email.
+        <Text style={{ ...text, marginTop: '24px', color: '#ababab', fontSize: '12px' }}>
+          This link will expire in 1 hour. If you didn&apos;t request this email, you can safely ignore it.
         </Text>
       </Container>
     </Body>
@@ -84,14 +73,6 @@ const h1 = {
   padding: '0',
 }
 
-const link = {
-  color: '#8B5CF6',
-  fontFamily:
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif",
-  fontSize: '14px',
-  textDecoration: 'underline',
-}
-
 const text = {
   color: '#d1d5db',
   fontFamily:
@@ -100,16 +81,18 @@ const text = {
   margin: '24px 0',
 }
 
-const code = {
+const button = {
   display: 'inline-block',
-  padding: '16px 4.5%',
-  width: '90.5%',
-  backgroundColor: '#1a1a1a',
-  borderRadius: '8px',
-  border: '1px solid #333',
+  padding: '16px 32px',
+  backgroundColor: '#8B5CF6',
   color: '#ffffff',
-  fontSize: '32px',
+  fontFamily:
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif",
+  fontSize: '16px',
   fontWeight: 'bold',
+  textDecoration: 'none',
+  borderRadius: '8px',
+  marginTop: '16px',
+  marginBottom: '16px',
   textAlign: 'center' as const,
-  letterSpacing: '0.1em',
 }

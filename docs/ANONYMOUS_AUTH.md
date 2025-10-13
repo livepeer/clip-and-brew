@@ -103,13 +103,17 @@ Uses `supabase.auth.signInAnonymously()` which:
 When anonymous user adds email:
 ```typescript
 await supabase.auth.updateUser({ email });
-// Then send OTP to verify
+// Then send magic link
 await supabase.auth.signInWithOtp({ email });
 ```
 
 Supabase links the email to the same `user.id`, preserving all data!
 
-**IMPORTANT**: The user record in the `users` table is only created AFTER successful OTP verification, not when the OTP is sent. This prevents conflict errors with the unique email constraint.
+**IMPORTANT**: The user record in the `users` table is created IMMEDIATELY when the email is entered, with `email_verified=false`. After the user clicks the magic link, the record is updated to `email_verified=true`. This approach allows us to:
+- Track signup attempts
+- Implement proper email verification flow
+- Avoid conflicts on resend attempts
+- Support future OTP code flow if needed
 
 ### Database Queries
 
@@ -195,23 +199,46 @@ Test by:
 3. Checking logs in Supabase Functions dashboard
 4. Checking Resend dashboard for sent emails
 
-## Recent Fixes (2025-10-13)
+## Recent Updates (2025-10-13)
 
-### Fixed: Conflict Error on Email Registration
+### Update 1: Magic Link Flow (Recommended)
 
-**Problem**: When adding an email, users were getting "A user with this email address has already been registered" error, even for new users.
+**Changed**: Moved from OTP code input to magic link only flow
 
-**Root Cause**: The `handleSendOtp` function was trying to create a user record in the `users` table BEFORE sending the OTP, which caused a conflict if:
-- The user already existed but wasn't verified
-- The user was attempting to re-verify
+**Why**: 
+- Simpler UX - users just click a link instead of copying a code
+- Easier to implement actual OTP codes later if needed
+- Better mobile experience
+- Matches modern authentication patterns
 
-**Solution**: 
-1. Removed the premature `upsert` to the `users` table from `handleSendOtp`
-2. User record is now only created in `handleVerifyOtp` AFTER successful verification
-3. Added logic to check if user exists and show appropriate messaging
-4. Supabase Auth automatically handles resending OTPs for unverified users
+**Changes Made**:
+1. **Email Template** (`supabase/functions/send-auth-email/_templates/otp-email.tsx`):
+   - Removed the 6-digit code display
+   - Changed to prominent "Sign in to Brewdream" button
+   - Simplified messaging
 
-**Code Location**: `src/components/Login.tsx` lines 76-130
+2. **Login Component** (`src/components/Login.tsx`):
+   - Removed OTP code input field
+   - Shows "Check your email" screen with mail icon
+   - Tells users to click the link (not enter a code)
+   - Uses `onAuthStateChange` to detect successful login
+
+3. **User Creation Flow**:
+   - User record created IMMEDIATELY when email is entered
+   - Created with `email_verified=false`
+   - Updated to `email_verified=true` after clicking magic link
+   - Allows tracking signup attempts and prevents conflicts
+
+4. **Database Schema** (`supabase/migrations/20251013230000_add_email_verified.sql`):
+   - Added `email_verified` boolean column
+   - Defaults to `false`
+   - Existing users with emails marked as `true`
+
+### Update 2: Fixed Conflict Error on Email Registration
+
+**Problem**: When adding an email, users were getting "A user with this email address has already been registered" error.
+
+**Solution**: User records are now created immediately with `email_verified=false`, then updated after verification. This prevents conflicts and allows proper resend functionality.
 
 ## Future Enhancements
 
