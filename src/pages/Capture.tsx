@@ -218,20 +218,10 @@ export default function Capture() {
       originalStreamRef.current = null;
     }
 
-    // Stop audio tracks
+    // Stop audio track we own (if any)
     if (realAudioTrackRef.current) {
-      realAudioTrackRef.current.stop();
+      try { realAudioTrackRef.current.stop(); } catch {}
       realAudioTrackRef.current = null;
-    }
-    if (silentAudioTrackRef.current) {
-      silentAudioTrackRef.current.stop();
-      silentAudioTrackRef.current = null;
-    }
-
-    // Close WebRTC peer connection
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
     }
 
     // Stop the PiP video
@@ -244,123 +234,10 @@ export default function Capture() {
     console.log('All media streams stopped');
   }, []);
 
-  const initializeStream = useCallback(async (type: 'front' | 'back', initialPrompt: string) => {
+  const initializeStream = useCallback(async (_type: 'front' | 'back', _initialPrompt: string) => {
+    // Simplified: streaming is handled by DaydreamCanvas; just show loading until onReady
     setLoading(true);
-    try {
-      // Calculate initial t_index_list based on default intensity and quality
-      const initialTIndexList = calculateTIndexList(intensity[0], quality[0]);
-
-      // Create Daydream stream with initial params to avoid default psychedelic
-      console.log('[CAPTURE] Creating stream with initial prompt:', initialPrompt);
-      console.log('[CAPTURE] Initial t_index_list:', initialTIndexList);
-
-      const initialParams: StreamDiffusionParams = {
-        model_id: 'stabilityai/sdxl-turbo',
-        prompt: initialPrompt,
-        negative_prompt: 'blurry, low quality, flat, 2d, distorted',
-        t_index_list: initialTIndexList,
-        seed: 42,
-        num_inference_steps: 50,
-        // Specify controlnets for consistency and accuracy
-        controlnets: [
-          {
-            enabled: true,
-            model_id: 'xinsir/controlnet-depth-sdxl-1.0',
-            preprocessor: 'depth_tensorrt',
-            preprocessor_params: {},
-            conditioning_scale: 0.6, // Increased from 0.3 for stronger structural consistency
-          },
-          {
-            enabled: true,
-            model_id: 'xinsir/controlnet-canny-sdxl-1.0',
-            preprocessor: 'canny',
-            preprocessor_params: {},
-            conditioning_scale: 0.3, // Enabled (was 0) for better edge preservation
-          },
-          {
-            enabled: true,
-            model_id: 'xinsir/controlnet-tile-sdxl-1.0',
-            preprocessor: 'feedback',
-            preprocessor_params: {},
-            conditioning_scale: 0.2, // Enabled (was 0) for temporal consistency
-          },
-        ],
-        // IP-Adapter disabled by default
-        ip_adapter: {
-          enabled: false,
-          type: 'regular',
-          scale: 0,
-          weight_type: 'linear',
-          insightface_model_name: 'buffalo_l',
-        },
-      };
-
-      console.log('[CAPTURE] About to create stream with initialParams:', JSON.stringify(initialParams, null, 2));
-      const streamData = await createDaydreamStream(initialParams);
-      console.log('[CAPTURE] Stream created successfully:', streamData);
-
-      setStreamId(streamData.id);
-      setPlaybackId(streamData.output_playback_id);
-      setWhipUrl(streamData.whip_url);
-      setStreamInitialized(false); // Mark as not yet initialized (will be set to true after a delay)
-
-      // Start WebRTC publishing
-      await startWebRTCPublish(streamData.whip_url, type);
-
-      // Save session to database
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        console.error('[CAPTURE] No authenticated user found');
-        await supabase.auth.signOut();
-        navigate('/login');
-        return;
-      }
-
-      // Check if user exists in database
-      const { data: userData, error: userLookupError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('id', user.id)
-        .single();
-
-      if (userLookupError || !userData) {
-        console.error('[CAPTURE] User not found in database, clearing auth:', userLookupError);
-        await supabase.auth.signOut();
-        navigate('/login');
-        return;
-      }
-
-      console.log('[CAPTURE] Creating session:', {
-        user_id: userData.id,
-        stream_id: streamData.id,
-        playback_id: streamData.output_playback_id
-      });
-
-      const { error: sessionError } = await supabase.from('sessions').insert({
-        user_id: userData.id,
-        stream_id: streamData.id,
-        playback_id: streamData.output_playback_id,
-        camera_type: type,
-      });
-
-      if (sessionError) {
-        console.error('[CAPTURE] Error creating session:', sessionError);
-        throw new Error(`Failed to create session: ${sessionError.message}`);
-      }
-
-      console.log('[CAPTURE] Session created successfully');
-    } catch (error: unknown) {
-      console.error('Error initializing stream:', error);
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : String(error),
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast, intensity, quality]); // intensity and quality used in calculateTIndexList for initial params
+  }, []);
 
   const selectCamera = useCallback(async (type: 'front' | 'back') => {
     setCameraType(type);
@@ -388,146 +265,7 @@ export default function Capture() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStartChecked, cameraType, loading]);
 
-  /**
-   * Create a silent audio track for streaming when microphone is disabled
-   */
-  const createSilentAudioTrack = (): MediaStreamTrack => {
-    const audioContext = new AudioContext();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-
-    // Set volume to 0 (silent)
-    gainNode.gain.value = 0;
-
-    oscillator.connect(gainNode);
-    const destination = audioContext.createMediaStreamDestination();
-    gainNode.connect(destination);
-    oscillator.start();
-
-    return destination.stream.getAudioTracks()[0];
-  };
-
-  /**
-   * Mirror a video stream by rendering it through a canvas
-   * This ensures the mirrored stream goes to Daydream, so the output is naturally mirrored
-   */
-  const mirrorStream = (originalStream: MediaStream): MediaStream => {
-    // Create a hidden video element to play the original stream
-    const video = document.createElement('video');
-    video.srcObject = originalStream;
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video.style.position = 'fixed';
-    video.style.top = '-9999px';
-    document.body.appendChild(video);
-
-    // Explicitly play the video
-    video.play().catch(err => console.error('Error playing video for mirroring:', err));
-
-    // Create a canvas to mirror the video
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext('2d', { alpha: false })!;
-
-    // Start continuous mirroring loop
-    const mirror = () => {
-      if (video.readyState >= video.HAVE_CURRENT_DATA) {
-        // Clear and redraw with horizontal flip
-        ctx.setTransform(-1, 0, 0, 1, canvas.width, 0); // Flip horizontally
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      }
-      requestAnimationFrame(mirror);
-    };
-
-    // Start drawing immediately
-    mirror();
-
-    // Capture the mirrored stream from canvas (24 fps to match typical camera)
-    const mirroredVideoStream = canvas.captureStream(24);
-
-    // Note: Audio tracks are handled separately in startWebRTCPublish
-    // We don't add them here to maintain control over mic on/off state
-
-    return mirroredVideoStream;
-  };
-
-  const startWebRTCPublish = async (whipUrl: string, type: 'front' | 'back') => {
-    try {
-      // Request both camera and microphone permissions upfront
-      let originalStream: MediaStream;
-      let hasAudioPermission = false;
-
-      try {
-        originalStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: type === 'front' ? 'user' : 'environment',
-            width: 512,
-            height: 512,
-          },
-          audio: true,
-        });
-        hasAudioPermission = true;
-        setMicPermissionGranted(true);
-        setMicPermissionDenied(false);
-      } catch (audioError) {
-        console.warn('Microphone permission denied or unavailable:', audioError);
-        // Try again with video only
-        originalStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: type === 'front' ? 'user' : 'environment',
-            width: 512,
-            height: 512,
-          },
-        });
-        setMicPermissionDenied(true);
-        setMicPermissionGranted(false);
-      }
-
-      // Store the original stream
-      originalStreamRef.current = originalStream;
-
-      // Mirror the stream if using front camera
-      const videoStream = type === 'front' ? mirrorStream(originalStream) : originalStream;
-
-      // Handle audio track setup
-      const audioTracks = originalStream.getAudioTracks();
-      if (audioTracks.length > 0 && hasAudioPermission) {
-        // We have mic permission - use the real audio track but start disabled
-        realAudioTrackRef.current = audioTracks[0];
-        realAudioTrackRef.current.enabled = false; // Mic off by default
-
-        // Make sure the audio track is in the video stream
-        if (!videoStream.getAudioTracks().find(t => t.id === realAudioTrackRef.current!.id)) {
-          videoStream.addTrack(realAudioTrackRef.current);
-        }
-      } else {
-        // No mic permission - use silent audio track
-        const silentTrack = createSilentAudioTrack();
-        silentAudioTrackRef.current = silentTrack;
-
-        // Remove any existing audio tracks and add silent one
-        videoStream.getAudioTracks().forEach(track => {
-          videoStream.removeTrack(track);
-        });
-        videoStream.addTrack(silentTrack);
-      }
-
-      if (sourceVideoRef.current) {
-        sourceVideoRef.current.srcObject = videoStream;
-      }
-
-      // Use the WHIP helper from daydream.ts
-      const pc = await startWhipPublish(whipUrl, videoStream);
-      pcRef.current = pc;
-
-      console.log('WebRTC publishing started with silent audio');
-    } catch (error) {
-      console.error('Error starting WebRTC publish:', error);
-      throw error;
-    }
-  };
+  // DaydreamCanvas abstracts streaming; no local WHIP logic here
 
   const toggleMicrophone = async () => {
     // If permission was denied or never granted, try to request it
@@ -535,30 +273,14 @@ export default function Capture() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const audioTrack = stream.getAudioTracks()[0];
-
-        if (audioTrack && pcRef.current) {
-          // Replace the silent track with the real one (only time we replace)
-          const senders = pcRef.current.getSenders();
-          const audioSender = senders.find(sender => sender.track?.kind === 'audio');
-
-          if (audioSender && silentAudioTrackRef.current) {
-            await audioSender.replaceTrack(audioTrack);
-            realAudioTrackRef.current = audioTrack;
-            realAudioTrackRef.current.enabled = true;
-
-            // Stop the old silent track
-            silentAudioTrackRef.current.stop();
-            silentAudioTrackRef.current = null;
-
-            setMicPermissionGranted(true);
-            setMicPermissionDenied(false);
-            setMicEnabled(true);
-
-            toast({
-              title: 'Microphone enabled',
-              description: 'Now streaming live audio',
-            });
-          }
+        if (audioTrack && daydreamRef.current) {
+          await daydreamRef.current.replaceAudioSource(audioTrack);
+          realAudioTrackRef.current = audioTrack;
+          realAudioTrackRef.current.enabled = true;
+          setMicPermissionGranted(true);
+          setMicPermissionDenied(false);
+          setMicEnabled(true);
+          toast({ title: 'Microphone enabled', description: 'Now streaming live audio' });
         }
       } catch (error) {
         console.error('Error requesting microphone permission:', error);
@@ -585,93 +307,7 @@ export default function Capture() {
     }
   };
 
-  const updatePrompt = useCallback(async () => {
-    if (!streamId) {
-      console.log('[CAPTURE] updatePrompt called but no streamId - skipping');
-      return;
-    }
-
-    console.log('[CAPTURE] updatePrompt called for stream:', streamId);
-    console.log('[CAPTURE] Current state - prompt:', prompt, 'intensity:', intensity[0], 'quality:', quality[0], 'texture:', selectedTexture);
-
-    try {
-      // Calculate t_index_list based on intensity and quality
-      const tIndexList = calculateTIndexList(intensity[0], quality[0]);
-      console.log('[CAPTURE] Calculated t_index_list:', tIndexList);
-
-      // Determine IP-Adapter settings when a texture is selected
-      const selectedTextureObj = selectedTexture
-        ? TEXTURES.find((t) => t.id === selectedTexture)
-        : null;
-
-      // Build params for StreamDiffusion
-      // CRITICAL: Always include model_id to prevent loading default
-      const params: StreamDiffusionParams = {
-        model_id: 'stabilityai/sdxl-turbo', // ALWAYS include to prevent model reload
-        prompt,
-        negative_prompt: 'blurry, low quality, flat, 2d, distorted',
-        t_index_list: tIndexList,
-        seed: 42,
-        num_inference_steps: 50,
-      };
-
-      // CRITICAL: Always include controlnets for consistency and accuracy
-      // Higher conditioning scales reduce flicker and improve structural consistency
-      // Keep controlnets enabled even with textures for maximum stability
-      params.controlnets = [
-        {
-          enabled: true,
-          model_id: 'xinsir/controlnet-depth-sdxl-1.0',
-          preprocessor: 'depth_tensorrt',
-          preprocessor_params: {},
-          conditioning_scale: 0.6, // Always enabled for structural consistency
-        },
-        {
-          enabled: true,
-          model_id: 'xinsir/controlnet-canny-sdxl-1.0',
-          preprocessor: 'canny',
-          preprocessor_params: {},
-          conditioning_scale: 0.3, // Always enabled for edge preservation
-        },
-        {
-          enabled: true,
-          model_id: 'xinsir/controlnet-tile-sdxl-1.0',
-          preprocessor: 'feedback',
-          preprocessor_params: {},
-          conditioning_scale: 0.2, // Always enabled for temporal consistency
-        },
-      ];
-
-      // Include IP-Adapter when a texture is selected, otherwise disable it
-      if (selectedTextureObj) {
-        params.ip_adapter = {
-          enabled: true,
-          type: 'regular',
-          scale: textureWeight[0],
-          weight_type: 'linear',
-          insightface_model_name: 'buffalo_l',
-        };
-        params.ip_adapter_style_image_url = selectedTextureObj.url;
-      } else {
-        // Explicitly disable IP-Adapter when no texture selected
-        params.ip_adapter = {
-          enabled: false,
-          type: 'regular',
-          scale: 0,
-          weight_type: 'linear',
-          insightface_model_name: 'buffalo_l',
-        };
-      }
-
-      // Use the StreamDiffusion prompt helper with proper params
-      console.log('[CAPTURE] About to call updateDaydreamPrompts with params:', params);
-      await updateDaydreamPrompts(streamId, params);
-      console.log('[CAPTURE] updateDaydreamPrompts completed successfully');
-
-    } catch (error: unknown) {
-      console.error('[CAPTURE] Error updating prompt:', error);
-    }
-  }, [streamId, prompt, intensity, quality, selectedTexture, textureWeight]);
+  // Params are passed directly to DaydreamCanvas (serial updates handled internally)
 
   const calculateTIndexList = (intensityVal: number, qualityVal: number): number[] => {
     let baseIndices: number[];
@@ -912,41 +548,69 @@ export default function Capture() {
     return manualSrc as any;
   }, [playbackId]);
 
-  // Mark stream as initialized after the background initialization has had time to complete
-  useEffect(() => {
-    if (streamId && !streamInitialized) {
-      console.log('[CAPTURE] Stream created, waiting 3 seconds before marking initialized...');
-      // Wait 3 seconds for the background initialization to complete before allowing updates
-      const timer = setTimeout(() => {
-        console.log('[CAPTURE] Stream initialized - ready for parameter updates');
-        setStreamInitialized(true);
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [streamId, streamInitialized]);
+  // DaydreamCanvas manages init/updates; no debounce here
 
-  // When stream becomes initialized, immediately sync current UI state to stream
-  useEffect(() => {
-    if (streamId && streamInitialized && prompt) {
-      console.log('[CAPTURE] Stream just initialized - forcing parameter sync with current UI state');
-      console.log('[CAPTURE] Syncing: prompt=', prompt, 'intensity=', intensity[0], 'quality=', quality[0]);
-      updatePrompt();
+  // Keep DaydreamCanvas params in sync with UI state by changing props
+  const canvasParams: StreamDiffusionParams = useMemo(() => {
+    const tIndex = calculateTIndexList(intensity[0], quality[0]);
+    const base: StreamDiffusionParams = {
+      model_id: 'stabilityai/sdxl-turbo',
+      prompt,
+      negative_prompt: 'blurry, low quality, flat, 2d, distorted',
+      t_index_list: tIndex,
+      seed: 42,
+      num_inference_steps: 50,
+      controlnets: selectedTexture
+        ? [
+            {
+              enabled: true,
+              model_id: 'xinsir/controlnet-depth-sdxl-1.0',
+              preprocessor: 'depth_tensorrt',
+              preprocessor_params: {},
+              conditioning_scale: 0.6,
+            },
+            {
+              enabled: true,
+              model_id: 'xinsir/controlnet-canny-sdxl-1.0',
+              preprocessor: 'canny',
+              preprocessor_params: {},
+              conditioning_scale: 0.3,
+            },
+            {
+              enabled: true,
+              model_id: 'xinsir/controlnet-tile-sdxl-1.0',
+              preprocessor: 'feedback',
+              preprocessor_params: {},
+              conditioning_scale: 0.2,
+            },
+          ]
+        : [],
+    };
+    if (selectedTexture) {
+      const textureUrl = TEXTURES.find((t) => t.id === selectedTexture)?.url;
+      return {
+        ...base,
+        ip_adapter: {
+          enabled: true,
+          type: 'regular',
+          scale: textureWeight[0],
+          weight_type: 'linear',
+          insightface_model_name: 'buffalo_l',
+        },
+        ip_adapter_style_image_url: textureUrl,
+      };
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streamInitialized]); // Only trigger when streamInitialized changes
-
-  useEffect(() => {
-    // Only update if stream is initialized (skip the initial update when stream is first created)
-    if (prompt && streamId && streamInitialized) {
-      console.log('[CAPTURE] Parameter changed, scheduling update in 500ms...');
-      const debounce = setTimeout(() => {
-        console.log('[CAPTURE] Debounce complete - updating stream with new parameters');
-        updatePrompt();
-      }, 500);
-      return () => clearTimeout(debounce);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt, selectedTexture, textureWeight, intensity, quality, streamId, streamInitialized]);
+    return {
+      ...base,
+      ip_adapter: {
+        enabled: false,
+        type: 'regular',
+        scale: 0,
+        weight_type: 'linear',
+        insightface_model_name: 'buffalo_l',
+      },
+    };
+  }, [intensity, quality, prompt, selectedTexture, textureWeight]);
 
   // Update recording timer display
   useEffect(() => {
@@ -1201,16 +865,51 @@ export default function Capture() {
               </Player.Root>
             </div>
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center gap-4">
-              <Loader2 className="w-12 h-12 animate-spin text-neutral-400" />
-              {playbackId && !src && (
-                <>
-                  <p className="text-xs text-neutral-500">Loading stream...</p>
-                  <p className="text-sm text-neutral-300 text-center px-4 min-h-[20px]">
-                    {showSlowLoadingMessage && "Hang tight! Stream loading can take up to 30 seconds..."}
-                  </p>
-                </>
-              )}
+            <div className="w-full h-full flex items-center justify-center">
+              {/* DaydreamCanvas handles stream creation and WHIP publish */}
+              <DaydreamCanvas
+                ref={daydreamRef}
+                size={512}
+                fps={24}
+                className="w-full h-full object-cover"
+                useCamera
+                cameraFacingMode={cameraType === 'front' ? 'user' : 'environment'}
+                mirrorFront
+                onLocalStream={(s) => {
+                  originalStreamRef.current = s;
+                  // Show PiP preview of source
+                  if (sourceVideoRef.current) sourceVideoRef.current.srcObject = s;
+                }}
+                params={canvasParams}
+                onReady={async ({ streamId: sid, playbackId: pid }) => {
+                  setStreamId(sid);
+                  setPlaybackId(pid);
+                  setLoading(false);
+                  // Ensure session exists
+                  const { data: { user } } = await supabase.auth.getUser();
+                  if (!user) return;
+                  const { data: userData } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('id', user.id)
+                    .single();
+                  if (userData) {
+                    await supabase.from('sessions').insert({
+                      user_id: userData.id,
+                      stream_id: sid,
+                      playback_id: pid,
+                      camera_type: cameraType!,
+                    });
+                  }
+                }}
+                onStatus={(s) => {
+                  if (s === 'ready') setIsPlaying(true);
+                }}
+                onError={(e) => {
+                  console.error('DaydreamCanvas error', e);
+                  setLoading(false);
+                }}
+              />
             </div>
           )}
 
