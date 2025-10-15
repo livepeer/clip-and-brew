@@ -219,6 +219,15 @@ export default function Capture() {
   }, []);
 
   const selectCamera = useCallback(async (type: 'front' | 'back') => {
+    // If switching cameras while stream is active, stop current stream first
+    if (cameraType && cameraType !== type) {
+      console.log(`Switching camera from ${cameraType} to ${type}`);
+      stopAllMediaStreams();
+      setPlaybackId(null);
+      setStreamId(null);
+      setIsPlaying(false);
+    }
+    
     setCameraType(type);
     const randomPrompt = type === 'front'
       ? FRONT_PROMPTS[Math.floor(Math.random() * FRONT_PROMPTS.length)]
@@ -227,7 +236,7 @@ export default function Capture() {
 
     // Pass the initial prompt to initializeStream
     await initializeStream(type, randomPrompt);
-  }, [initializeStream]);
+  }, [initializeStream, cameraType, stopAllMediaStreams]);
 
   // Auto-start camera on desktop (non-mobile devices)
   useEffect(() => {
@@ -886,6 +895,22 @@ export default function Capture() {
               )}
             </Button>
           </div>
+
+          {/* Camera Switch Button - only show on mobile devices with multiple cameras */}
+          {hasMultipleCameras() && (
+            <div className="absolute top-3 right-3">
+              <Button
+                onClick={() => selectCamera(cameraType === 'front' ? 'back' : 'front')}
+                disabled={loading}
+                size="icon"
+                variant="secondary"
+                className="w-12 h-12 rounded-full shadow-lg transition-all duration-200 bg-neutral-800 hover:bg-neutral-700 text-neutral-200"
+                title={`Switch to ${cameraType === 'front' ? 'back' : 'front'} camera`}
+              >
+                <Camera className="w-5 h-5" />
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -938,6 +963,21 @@ export default function Capture() {
 
           {/* Controls */}
           <div className="bg-neutral-950 rounded-3xl p-5 border border-neutral-800 space-y-4 shadow-inner">
+            {/* Camera Switch Button - only show on mobile devices with multiple cameras */}
+            {hasMultipleCameras() && (
+              <div className="flex justify-center">
+                <Button
+                  onClick={() => selectCamera(cameraType === 'front' ? 'back' : 'front')}
+                  disabled={loading}
+                  variant="outline"
+                  className="bg-neutral-900 border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 text-neutral-200"
+                >
+                  <Camera className="w-4 h-4 mr-2" />
+                  Switch to {cameraType === 'front' ? 'Back' : 'Front'} Camera
+                </Button>
+              </div>
+            )}
+            
             <div>
               <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
               <div className="flex items-start gap-2">
