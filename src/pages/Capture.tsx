@@ -220,7 +220,7 @@ export default function Capture() {
 
     // Stop audio track we own (if any)
     if (realAudioTrackRef.current) {
-      try { realAudioTrackRef.current.stop(); } catch {}
+      try { realAudioTrackRef.current.stop(); } catch (e) { /* Track may already be stopped */ }
       realAudioTrackRef.current = null;
     }
 
@@ -553,6 +553,7 @@ export default function Capture() {
   // Keep DaydreamCanvas params in sync with UI state by changing props
   const canvasParams: StreamDiffusionParams = useMemo(() => {
     const tIndex = calculateTIndexList(intensity[0], quality[0]);
+
     const base: StreamDiffusionParams = {
       model_id: 'stabilityai/sdxl-turbo',
       prompt,

@@ -93,6 +93,10 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       params,
       videoSource,
       sourceCanvas,
+      useCamera = false,
+      cameraFacingMode = 'user',
+      mirrorFront = true,
+      onLocalStream,
       audioSource = null,
       useMicrophone = false,
       microphoneConstraints,
@@ -319,7 +323,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
     // Attempt to create a silent audio track
     const createSilentAudioTrack = useCallback((): MediaStreamTrack | null => {
       try {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
         audioContextRef.current = audioContext;
         const oscillator = audioContext.createOscillator();
         const gain = audioContext.createGain();
@@ -357,7 +361,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
           if (sender) await sender.replaceTrack(micTrack);
         }
         if (silentAudioTrackRef.current) {
-          try { silentAudioTrackRef.current.stop(); } catch {}
+          try { silentAudioTrackRef.current.stop(); } catch (e) { /* Track may already be stopped */ }
           silentAudioTrackRef.current = null;
         }
         currentAudioTrackRef.current = micTrack;
@@ -455,7 +459,9 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
         if (silentAudioTrackRef.current && silentAudioTrackRef.current !== newTrack) {
           try {
             silentAudioTrackRef.current.stop();
-          } catch {}
+          } catch (e) {
+            /* Track may already be stopped */
+          }
           silentAudioTrackRef.current = null;
         }
         currentAudioTrackRef.current = newTrack;
@@ -633,7 +639,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
         onError?.(e);
         throw e;
       }
-    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, setStatus, sourceCanvas, startCopyLoop, videoSource]);
+    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, sourceCanvas, startCopyLoop, videoSource]);
 
     // Stop publishing and cleanup
     const stop = useCallback(async () => {
@@ -644,7 +650,9 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       if (pcRef.current) {
         try {
           pcRef.current.close();
-        } catch {}
+        } catch (e) {
+          /* Connection may already be closed */
+        }
         pcRef.current = null;
       }
 
@@ -653,7 +661,9 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
         publishStreamRef.current.getTracks().forEach((t) => {
           try {
             t.stop();
-          } catch {}
+          } catch (e) {
+            /* Track may already be stopped */
+          }
         });
         publishStreamRef.current = null;
       }
@@ -662,13 +672,17 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       if (silentAudioTrackRef.current) {
         try {
           silentAudioTrackRef.current.stop();
-        } catch {}
+        } catch (e) {
+          /* Track may already be stopped */
+        }
         silentAudioTrackRef.current = null;
       }
       if (audioContextRef.current) {
         try {
           audioContextRef.current.close();
-        } catch {}
+        } catch (e) {
+          /* Context may already be closed */
+        }
         audioContextRef.current = null;
       }
 
@@ -680,7 +694,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       playbackIdRef.current = null;
 
       // stopped
-    }, [setStatus, stopCopyLoop]);
+    }, [stopCopyLoop]);
 
     // Expose imperative API
     useImperativeHandle(
