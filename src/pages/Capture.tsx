@@ -189,16 +189,15 @@ export default function Capture() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
-  // useEffect(() => {
-  //   checkAuth();
-  // }, []);
-
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       navigate('/login');
     }
-  };
+  }, [navigate]);
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
 
   /**
    * Stop all media streams and clean up resources
@@ -847,12 +846,23 @@ export default function Capture() {
                   .eq('id', user.id)
                   .single();
                 if (userData) {
-                  await supabase.from('sessions').insert({
+                  // Map UI cameraType ('user'|'environment') to DB enum ('front'|'back')
+                  const cameraDbType = cameraType === 'user' ? 'front' : 'back';
+                  const { error: insertError } = await supabase.from('sessions').insert({
                     user_id: userData.id,
                     stream_id: sid,
                     playback_id: pid,
-                    camera_type: cameraType!,
+                    camera_type: cameraDbType,
                   });
+                  if (insertError) {
+                    console.error('Failed to insert session:', insertError, {
+                      userId: userData.id,
+                      streamId: sid,
+                      playbackId: pid,
+                      cameraType,
+                      cameraDbType,
+                    });
+                  }
                 }
               }}
               // Rely on onReady + player events; no onStatus needed

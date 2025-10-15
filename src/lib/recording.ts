@@ -64,9 +64,12 @@ export class VideoRecorder {
     console.log('Recording with MIME type:', this.mimeType);
 
     // Create MediaRecorder with optimized settings
+    // Set audioBitsPerSecond to avoid AudioContext conflicts when capturing player audio
+    // The player's WebRTC audio is already processed; we just pass it through
     this.recorder = new MediaRecorder(stream, {
       mimeType: this.mimeType,
       videoBitsPerSecond: 2500000, // 2.5 Mbps for good quality
+      audioBitsPerSecond: 128000, // 128 kbps, standard quality, avoids re-encoding conflicts
     });
     this.chunks = [];
     this.startTime = Date.now();
