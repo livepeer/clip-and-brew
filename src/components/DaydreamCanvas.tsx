@@ -1,11 +1,9 @@
 import React, {
   useRef,
   useEffect,
-  useImperativeHandle,
   useMemo,
   useCallback,
   useState,
-  forwardRef,
 } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -13,16 +11,6 @@ import {
   startWhipPublish,
 } from '@/lib/daydream';
 import type { StreamDiffusionParams } from '@/lib/daydream';
-
-export interface DaydreamCanvasHandle {
-  start: () => Promise<void>;
-  stop: () => Promise<void>;
-  pushFrame: (source: CanvasImageSource) => void;
-  replaceAudioSource: (audio: MediaStream | MediaStreamTrack | null) => Promise<void>;
-  requestMicrophone: () => Promise<boolean>;
-  setMicrophoneEnabled: (enabled: boolean) => void;
-  getStreamInfo: () => { streamId: string | null; playbackId: string | null };
-}
 
 export interface DaydreamCanvasProps {
   params: StreamDiffusionParams;
@@ -62,7 +50,6 @@ export interface DaydreamCanvasProps {
   style?: React.CSSProperties;
   canvasRef?: React.Ref<HTMLCanvasElement>; // optional ref to the canvas element
   // Lifecycle & behavior
-  autoStart?: boolean; // start on mount (default true)
   alwaysOn?: boolean; // keep alive in background on mobile (default false)
   // Events
   onReady?: (info: { streamId: string; playbackId: string }) => void;
@@ -102,25 +89,20 @@ function computeCoverDrawRect(
   return { dx, dy, drawWidth, drawHeight };
 }
 
-export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasProps>(
-  (
-    {
-      params,
-      videoSource,
-      audioSource,
-      size = 512,
-      cover = true,
-      enforceSquare = true,
-      className,
-      style,
-      canvasRef: externalCanvasRef,
-      autoStart = true,
-      alwaysOn = false,
-      onReady,
-      onError,
-    },
-    ref
-  ) => {
+export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
+  params,
+  videoSource,
+  audioSource,
+  size = 512,
+  cover = true,
+  enforceSquare = true,
+  className,
+  style,
+  canvasRef: externalCanvasRef,
+  alwaysOn = false,
+  onReady,
+  onError,
+}) => {
     // Derive FPS from video source (try to match source, default to 24)
     const fps = useMemo(() => {
       if (videoSource.type === 'stream') {
@@ -858,59 +840,6 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       // stopped
     }, [stopCopyLoop]);
 
-    // Expose imperative API
-    useImperativeHandle(
-      ref,
-      (): DaydreamCanvasHandle => ({
-        start,
-        stop,
-        pushFrame: (source: CanvasImageSource) => {
-          const c = canvasRef.current;
-          if (!c) return;
-          const ctx = c.getContext('2d', { alpha: false });
-          if (!ctx) return;
-          const sizePx = enforceSquare ? size : Math.min(size, Math.max(c.width, c.height));
-          // Attempt to determine source dimensions
-          let srcW = 0;
-          let srcH = 0;
-          // Narrow common cases
-          if ('videoWidth' in source && 'videoHeight' in source) {
-            // HTMLVideoElement
-            const v = source as HTMLVideoElement;
-            srcW = v.videoWidth;
-            srcH = v.videoHeight;
-          } else if ('width' in source && 'height' in source) {
-            // HTMLCanvasElement, ImageBitmap, OffscreenCanvas
-            // @ts-expect-error dynamic lookup for union
-            srcW = source.width || 0;
-            // @ts-expect-error dynamic lookup for union
-            srcH = source.height || 0;
-          }
-          if (srcW > 0 && srcH > 0) {
-            if (cover) {
-              const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
-              ctx.drawImage(source as CanvasImageSource, dx, dy, drawWidth, drawHeight);
-            } else {
-              const scale = Math.min(sizePx / srcW, sizePx / srcH);
-              const dw = srcW * scale;
-              const dh = srcH * scale;
-              const dx = (sizePx - dw) / 2;
-              const dy = (sizePx - dh) / 2;
-              ctx.drawImage(source as CanvasImageSource, dx, dy, dw, dh);
-            }
-          }
-        },
-        replaceAudioSource,
-        requestMicrophone,
-        setMicrophoneEnabled,
-        getStreamInfo: () => ({
-          streamId: streamIdRef.current,
-          playbackId: playbackIdRef.current,
-        }),
-      }),
-      [cover, enforceSquare, replaceAudioSource, requestMicrophone, setMicrophoneEnabled, size, start, stop]
-    );
-
     // Background auto-stop/start (mobile default)
     useEffect(() => {
       if (alwaysOn) return; // caller opted out
@@ -926,7 +855,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
             wasRunningRef.current = false;
           }
         } else {
-          if (wasRunningRef.current && autoStart) {
+          if (wasRunningRef.current) {
             wasRunningRef.current = false;
             void start();
           }
@@ -935,17 +864,15 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
 
       document.addEventListener('visibilitychange', handleVisibility);
       return () => document.removeEventListener('visibilitychange', handleVisibility);
-    }, [alwaysOn, autoStart, start, stop]);
+    }, [alwaysOn, start, stop]);
 
     // Auto-start on mount
+    // TODO: Allow explicitly starting/stopping if needed.
     useEffect(() => {
-      if (autoStart) {
-        void start();
-        return () => {
-          void stop();
-        };
-      }
-      return;
+      void start();
+      return () => {
+        void stop();
+      };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -961,16 +888,15 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       }
     }, [externalCanvasRef]);
 
-    return (
-      <canvas
-        ref={setCanvasRef}
-        className={className}
-        style={style}
-        width={enforceSquare ? size : undefined}
-        height={enforceSquare ? size : undefined}
-      />
-    );
-  }
-);
+  return (
+    <canvas
+      ref={setCanvasRef}
+      className={className}
+      style={style}
+      width={enforceSquare ? size : undefined}
+      height={enforceSquare ? size : undefined}
+    />
+  );
+};
 
 DaydreamCanvas.displayName = 'DaydreamCanvas';

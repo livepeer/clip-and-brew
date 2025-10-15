@@ -17,7 +17,6 @@ import * as Player from '@livepeer/react/player';
 import { getSrc } from '@livepeer/react/external';
 import type { StreamDiffusionParams } from '@/lib/daydream';
 import { DaydreamCanvas } from '@/components/DaydreamCanvas';
-import type { DaydreamCanvasHandle } from '@/components/DaydreamCanvas';
 import { StudioRecorder, type StudioRecorderHandle } from '@/components/StudioRecorder';
 import { saveClipToDatabase } from '@/lib/recording';
 
@@ -177,7 +176,6 @@ export default function Capture() {
   const [micPermissionGranted, setMicPermissionGranted] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
 
-  const daydreamRef = useRef<DaydreamCanvasHandle | null>(null);
   const studioRecorderRef = useRef<StudioRecorderHandle | null>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -198,20 +196,6 @@ export default function Capture() {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
-
-  /**
-   * Stop all media streams and clean up resources
-   */
-  const stopAllMediaStreams = useCallback(() => {
-    console.log('Stopping all media streams...');
-
-    // DaydreamCanvas handles its own cleanup
-    if (daydreamRef.current) {
-      daydreamRef.current.stop().catch(console.error);
-    }
-
-    console.log('All media streams stopped');
-  }, []);
 
   const initializeStream = useCallback(async (_type: 'user' | 'environment', _initialPrompt: string) => {
     // Simplified: streaming is handled by DaydreamCanvas; just show loading until onReady
@@ -603,13 +587,6 @@ export default function Capture() {
     };
   }, []);
 
-  // Cleanup audio tracks on unmount
-  useEffect(() => {
-    return () => {
-      stopAllMediaStreams();
-    };
-  }, [stopAllMediaStreams]);
-
   // Handle tab visibility changes - stop streams when user leaves tab (mobile only)
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -630,9 +607,6 @@ export default function Capture() {
         console.log('Tab hidden (mobile) - stopping media streams for privacy');
         tabHiddenTimeRef.current = Date.now();
         wasStreamActiveRef.current = !!playbackId; // Remember if we had an active stream
-
-        // Stop all media streams immediately for privacy/safety
-        stopAllMediaStreams();
 
         // Clear the playback and stream state to show loading when they return
         setPlaybackId(null);
@@ -667,7 +641,7 @@ export default function Capture() {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [cameraType, playbackId, prompt, stopAllMediaStreams, initializeStream, toast]);
+  }, [cameraType, playbackId, prompt, initializeStream, toast]);
 
   // Show reassuring message if stream takes longer than 10s to load
   useEffect(() => {
@@ -717,7 +691,7 @@ export default function Capture() {
         });
       }
     }
-  }, [cameraType, prompt, navigate, toast]);
+  }, [cameraType]);
   // Rely on onReady + player events; no onStatus needed
   const onDaydreamError = useCallback((e) => {
     console.error('DaydreamCanvas error', e);
@@ -858,7 +832,6 @@ export default function Capture() {
           {/* DaydreamCanvas: camera input preview (PiP in bottom-right) */}
           <div className="absolute bottom-3 right-3 w-20 h-20 rounded-2xl overflow-hidden border-2 border-white shadow-lg">
             <DaydreamCanvas
-              ref={daydreamRef}
               size={512}
               className="w-full h-full object-cover"
               videoSource={{
