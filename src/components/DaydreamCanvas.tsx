@@ -572,7 +572,32 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
           num_inference_steps: params.num_inference_steps ?? 50,
           seed: params.seed ?? 42,
           t_index_list: params.t_index_list ?? [6, 12, 18],
-          controlnets: params.controlnets ?? [],
+          controlnets:
+            params.controlnets && params.controlnets.length
+              ? params.controlnets.map((cn) => ({ enabled: true, preprocessor_params: {}, ...cn }))
+              : [
+                  {
+                    enabled: true,
+                    model_id: 'xinsir/controlnet-depth-sdxl-1.0',
+                    preprocessor: 'depth_tensorrt',
+                    preprocessor_params: {},
+                    conditioning_scale: 0.6,
+                  },
+                  {
+                    enabled: true,
+                    model_id: 'xinsir/controlnet-canny-sdxl-1.0',
+                    preprocessor: 'canny',
+                    preprocessor_params: {},
+                    conditioning_scale: 0.3,
+                  },
+                  {
+                    enabled: true,
+                    model_id: 'xinsir/controlnet-tile-sdxl-1.0',
+                    preprocessor: 'feedback',
+                    preprocessor_params: {},
+                    conditioning_scale: 0.2,
+                  },
+                ],
           ip_adapter: params.ip_adapter ?? {
             enabled: false,
             type: 'regular',
