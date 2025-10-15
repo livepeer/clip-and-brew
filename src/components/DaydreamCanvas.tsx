@@ -26,9 +26,8 @@ export interface DaydreamCanvasHandle {
 
 export interface DaydreamCanvasProps {
   params: StreamDiffusionParams;
-  // Video frame sources (optional). If provided, the component will copy at the configured FPS.
-  videoSource?: MediaStream; // e.g., camera MediaStream
-  sourceCanvas?: HTMLCanvasElement; // e.g., an existing render target
+  // Video frame source (optional). If provided, the component will draw frames at the configured FPS.
+  videoSource?: MediaStream; // e.g., external camera MediaStream
   // Built-in camera capture (optional). If enabled, the component obtains camera stream internally.
   useCamera?: boolean; // default false
   cameraFacingMode?: 'user' | 'environment'; // when useCamera, default 'user'
@@ -92,7 +91,6 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
     {
       params,
       videoSource,
-      sourceCanvas,
       useCamera = false,
       cameraFacingMode = 'user',
       mirrorFront = true,
@@ -116,7 +114,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
     // Canvas and optional hidden video element for MediaStream sources
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
-    const ownedCameraStreamRef = useRef<MediaStream | null>(null);
+    const [ownedCameraStream, setOwnedCameraStream] = useState<MediaStream | null>(null);
 
     // Publishing state
     const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -161,45 +159,58 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       }
     }, [size, enforceSquare]);
 
-    // Create/destroy hidden video for MediaStream sources (external or owned)
+    // Create video element once on mount (hidden in DOM for drawImage to work)
     useEffect(() => {
-      const effectiveStream = videoSource || ownedCameraStreamRef.current;
-      if (!effectiveStream) {
-        if (hiddenVideoRef.current) {
-          hiddenVideoRef.current.srcObject = null;
-          hiddenVideoRef.current.remove();
-          hiddenVideoRef.current = null;
-        }
-        return;
-      }
-      let video = hiddenVideoRef.current;
-      if (!video) {
-        video = document.createElement('video');
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
-        video.style.position = 'fixed';
-        video.style.top = '-99999px';
-        video.style.left = '-99999px';
-        document.body.appendChild(video);
-        hiddenVideoRef.current = video;
-      }
-      video.srcObject = effectiveStream;
-      video.play().catch(() => {});
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.autoplay = true;
+
+      // Must be in DOM for drawImage to work reliably
+      video.style.position = 'fixed';
+      video.style.top = '-9999px';
+      video.style.left = '-9999px';
+      video.style.width = '1px';
+      video.style.height = '1px';
+      video.style.opacity = '0';
+      video.style.pointerEvents = 'none';
+      document.body.appendChild(video);
+
+      hiddenVideoRef.current = video;
 
       return () => {
         if (hiddenVideoRef.current) {
           hiddenVideoRef.current.srcObject = null;
-          hiddenVideoRef.current.remove();
+          if (hiddenVideoRef.current.parentNode) {
+            hiddenVideoRef.current.parentNode.removeChild(hiddenVideoRef.current);
+          }
           hiddenVideoRef.current = null;
         }
       };
-    }, [videoSource]);
+    }, []);
+
+    // Update video source when stream changes
+    useEffect(() => {
+      const effectiveStream = videoSource || ownedCameraStream;
+      const video = hiddenVideoRef.current;
+      if (!video) return;
+
+      if (!effectiveStream) {
+        video.srcObject = null;
+        return;
+      }
+
+      video.srcObject = effectiveStream;
+      video.play().catch(() => {
+        // Silent fail - autoplay handles this
+      });
+    }, [videoSource, ownedCameraStream]);
 
     // Optionally obtain camera stream internally
     useEffect(() => {
       if (!useCamera) return;
       let cancelled = false;
+      let localStream: MediaStream | null = null;
       (async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -210,16 +221,18 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
             stream.getTracks().forEach(t => t.stop());
             return;
           }
-          ownedCameraStreamRef.current = stream;
+          localStream = stream;
+          setOwnedCameraStream(stream);
         } catch (e) {
+          console.error('[DaydreamCanvas] Failed to get camera:', e);
           onError?.(e);
         }
       })();
       return () => {
         cancelled = true;
-        if (ownedCameraStreamRef.current) {
-          ownedCameraStreamRef.current.getTracks().forEach(t => t.stop());
-          ownedCameraStreamRef.current = null;
+        if (localStream) {
+          localStream.getTracks().forEach(t => t.stop());
+          setOwnedCameraStream(null);
         }
       };
     }, [useCamera, cameraFacingMode, onError, size]);
@@ -244,64 +257,31 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
               const sizePx = enforceSquare ? size : Math.min(size, Math.max(canvasRef.current.width, canvasRef.current.height));
               ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
               let drew = false;
-              if (sourceCanvas) {
-                const srcW = sourceCanvas.width;
-                const srcH = sourceCanvas.height;
-                if (srcW > 0 && srcH > 0) {
-                  if (cover) {
-                    const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
-                    ctx.drawImage(sourceCanvas, dx, dy, drawWidth, drawHeight);
-                  } else {
-                    // contain
-                    const scale = Math.min(sizePx / srcW, sizePx / srcH);
-                    const dw = srcW * scale;
-                    const dh = srcH * scale;
-                    const dx = (sizePx - dw) / 2;
-                    const dy = (sizePx - dh) / 2;
-                    ctx.drawImage(sourceCanvas, dx, dy, dw, dh);
-                  }
-                  drew = true;
-                }
-              } else if (hiddenVideoRef.current && hiddenVideoRef.current.readyState >= 2) {
+
+              if (hiddenVideoRef.current && hiddenVideoRef.current.readyState >= hiddenVideoRef.current.HAVE_CURRENT_DATA) {
                 const v = hiddenVideoRef.current;
                 const srcW = v.videoWidth;
                 const srcH = v.videoHeight;
                 if (srcW > 0 && srcH > 0) {
+                  // Use setTransform for mirroring (like old working code)
+                  const needMirror = mirrorFront && (cameraFacingMode ?? 'user') === 'user' && (useCamera || videoSource);
+                  if (needMirror) {
+                    ctx.setTransform(-1, 0, 0, 1, sizePx, 0);
+                  }
+
                   if (cover) {
                     const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
-                    // Optional mirroring for front camera UX
-                    const needMirror = mirrorFront && (cameraFacingMode ?? 'user') === 'user' && (useCamera || videoSource);
-                    if (needMirror) {
-                      ctx.save();
-                      ctx.translate(sizePx, 0);
-                      ctx.scale(-1, 1);
-                      ctx.drawImage(v, -dx, dy, -drawWidth, drawHeight);
-                      ctx.restore();
-                    } else {
-                      ctx.drawImage(v, dx, dy, drawWidth, drawHeight);
-                    }
+                    ctx.drawImage(v, dx, dy, drawWidth, drawHeight);
                   } else {
-                    const scale = Math.min(sizePx / srcW, sizePx / srcH);
-                    const dw = srcW * scale;
-                    const dh = srcH * scale;
-                    const dx = (sizePx - dw) / 2;
-                    const dy = (sizePx - dh) / 2;
-                    const needMirror = mirrorFront && (cameraFacingMode ?? 'user') === 'user' && (useCamera || videoSource);
-                    if (needMirror) {
-                      ctx.save();
-                      ctx.translate(sizePx, 0);
-                      ctx.scale(-1, 1);
-                      ctx.drawImage(v, -dx, dy, -dw, dh);
-                      ctx.restore();
-                    } else {
-                      ctx.drawImage(v, dx, dy, dw, dh);
-                    }
+                    // Scale to fit (no distortion)
+                    ctx.drawImage(v, 0, 0, sizePx, sizePx);
+                  }
+
+                  if (needMirror) {
+                    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
                   }
                   drew = true;
                 }
-              }
-              if (!drew) {
-                // no-op when no valid frame yet
               }
             }
           }
@@ -309,7 +289,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
         rafIdRef.current = requestAnimationFrame(tick);
       };
       rafIdRef.current = requestAnimationFrame(tick);
-    }, [cover, enforceSquare, fps, size, sourceCanvas]);
+    }, [cameraFacingMode, cover, enforceSquare, fps, mirrorFront, size, useCamera, videoSource]);
 
     const stopCopyLoop = useCallback(() => {
       runningCopyLoopRef.current = false;
@@ -478,6 +458,8 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       const next = pendingParamsRef.current;
       if (!next) return;
 
+      // Clear pending immediately to detect new updates during send
+      pendingParamsRef.current = null;
       paramsInFlightRef.current = true;
       // Snapshot latest for eventual consistency; always include required defaults
       const latest = latestParamsRef.current || next;
@@ -566,8 +548,8 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       try {
         // creating_stream
 
-        // Optional: kick off copy loop if we have a source; users can also pushFrame manually
-        if (videoSource || sourceCanvas) startCopyLoop();
+        // Kick off copy loop if we have any video source (external or internal camera)
+        if (videoSource || useCamera) startCopyLoop();
 
         // Create stream with initial params
         const initialParams: StreamDiffusionParams = {
@@ -638,7 +620,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
         onError?.(e);
         throw e;
       }
-    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, sourceCanvas, startCopyLoop, videoSource]);
+    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, startCopyLoop, useCamera, videoSource]);
 
     // Stop publishing and cleanup
     const stop = useCallback(async () => {
@@ -802,7 +784,7 @@ export const DaydreamCanvas = forwardRef<DaydreamCanvasHandle, DaydreamCanvasPro
       <canvas
         ref={setCanvasRef}
         className={className}
-        style={{ width: size, height: size, ...style }}
+        style={style}
         width={enforceSquare ? size : undefined}
         height={enforceSquare ? size : undefined}
       />
