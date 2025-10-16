@@ -9,43 +9,7 @@ import {
 } from "@/components/ui/popover";
 import { RefreshCw, ImageOff } from "lucide-react";
 import type { StreamDiffusionParams } from "@/lib/daydream";
-
-const FRONT_PROMPTS = [
-  "studio ghibli portrait, soft rim light",
-  "cyberpunk neon portrait 90s anime",
-  "watercolor ink portrait, loose brush",
-  "melting holographic portrait, liquid chrome",
-  "psychedelic kaleidoscope face, fractal patterns",
-  "glitch art portrait, RGB split, datamosh",
-  "cosmic deity portrait, galaxy skin, star eyes",
-  "retro VHS portrait, scan lines, 80s aesthetic",
-  "paper cutout collage portrait, layered colors",
-  "oil painting portrait, impasto texture",
-  "neon wireframe portrait, tron aesthetic",
-  "crystalline ice portrait, frozen fractals",
-  "graffiti street art portrait, spray paint drips, urban",
-  "cel-shaded anime portrait, bold outlines, flat colors",
-  "ethereal ghost portrait, translucent, wispy trails",
-];
-
-const BACK_PROMPTS = [
-  "impressionist garden, monet style, soft focus",
-  "cyberpunk cityscape, neon signs, rain reflections",
-  "fantasy forest, bioluminescent plants, mystical",
-  "abstract expressionism, bold brushstrokes, vibrant",
-  "steampunk mechanism, brass gears, Victorian",
-  "surreal dreamscape, melting clocks, dali inspired",
-  "pixel art landscape, 8-bit retro, nostalgic",
-  "stained glass cathedral, colorful light rays",
-  "abstract fluid art, marbled ink, organic flow",
-  "cosmic nebula, swirling stars, deep space",
-  "minimalist geometric shapes, clean lines, modern",
-  "gothic architecture, dark stone, dramatic shadows",
-  "tropical paradise, palm trees, sunset colors",
-  "enchanted library, floating books, magical atmosphere",
-  "cherry blossom garden, pink petals falling, serene",
-  "gothic cathedral interior, stained glass, divine rays",
-];
+import prompts from "@/components/prompts";
 
 const TEXTURES = [
   {
@@ -221,12 +185,12 @@ export function DiffusionParams({
   }, [prompt, updateBrewParams]);
 
   const shufflePrompt = useCallback(() => {
-    const prompts = !cameraType
-      ? ["barista"]
+    const possiblePrompts = !cameraType
+      ? prompts.default
       : cameraType === "user"
-      ? FRONT_PROMPTS
-      : BACK_PROMPTS;
-    const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
+      ? prompts.front
+      : prompts.back;
+    const randomPrompt = possiblePrompts[Math.floor(Math.random() * possiblePrompts.length)];
     updateBrewParams({ prompt: randomPrompt });
   }, [cameraType, updateBrewParams]);
 

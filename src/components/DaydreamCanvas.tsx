@@ -11,11 +11,12 @@ import {
   startWhipPublish,
 } from '@/lib/daydream';
 import type { StreamDiffusionParams } from '@/lib/daydream';
+import prompts from '@/components/prompts';
 
 // Default stream diffusion parameters
 const DEFAULT_STREAM_DIFFUSION_PARAMS = {
   model_id: 'stabilityai/sdxl-turbo',
-  prompt: 'barista',
+  prompt: prompts.default[0],
   negative_prompt: 'blurry, low quality, flat, 2d, distorted',
   num_inference_steps: 50,
   seed: 42,
