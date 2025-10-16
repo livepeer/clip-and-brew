@@ -346,10 +346,10 @@ export default function Capture() {
   // StudioRecorder callback: Handle upload progress
   const handleRecordingProgress = useCallback((progress: { phase: string; step?: string; progress?: number }) => {
     if (progress.phase === 'uploading' && progress.progress !== undefined) {
-      // Show upload progress with percentage
-      const uploadPercent = Math.round(progress.progress);
+      // Show upload progress with percentage (TUS only)
+      const uploadPercent = Math.round(progress.progress * 100);
       setUploadProgress(`Uploading: ${uploadPercent}%`);
-    } else if (progress.phase === 'processing' && progress.progress !== undefined) {
+    } if (progress.phase === 'processing' && progress.progress !== undefined) {
       // Smooth progression: use API value if greater, otherwise increment by 1%
       setLastDisplayedProgress(prev => {
         let newProgress = Math.round(progress.progress * 100);
