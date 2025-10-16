@@ -82,6 +82,10 @@ export default function Capture() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
+  const onParamsError = useCallback((err: Error) => {
+    toast({title: "Error", description: err.message, variant: "destructive"});
+  }, [toast]);
+
   const checkAuth = useCallback(async () => {
     const {
       data: { session },
@@ -659,8 +663,8 @@ export default function Capture() {
   else if (!setupComplete) {
     content = (
       <div className="min-h-screen flex flex-col items-center justify-between p-6 bg-neutral-950 text-neutral-200">
-        <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md mx-auto space-y-4">
-          <div className="text-center space-y-1">
+        <div className="flex-1 flex flex-col items-center justify-center w-full space-y-4">
+          <div className="text-center space-y-1 w-full">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent">
               Design Your Brew
             </h1>
@@ -669,15 +673,15 @@ export default function Capture() {
             </p>
           </div>
 
-          <DiffusionParams
-            cameraType={cameraType}
-            brewParams={brewParams}
-            onBrewParamsChange={setBrewParams}
-            handleStreamDiffusionParams={setCanvasParams}
-            onError={(err) => {
-              toast({title: "Error", description: err.message, variant: "destructive"});
-            }}
-          />
+          <div className="w-full">
+            <DiffusionParams
+              cameraType={cameraType}
+              brewParams={brewParams}
+              onBrewParamsChange={setBrewParams}
+              handleStreamDiffusionParams={setCanvasParams}
+              onError={onParamsError}
+            />
+          </div>
         </div>
 
         {/* Start Button at Bottom */}
@@ -869,9 +873,7 @@ export default function Capture() {
               brewParams={brewParams}
               onBrewParamsChange={setBrewParams}
               handleStreamDiffusionParams={setCanvasParams}
-              onError={(err) => {
-                toast({title: "Error", description: err.message, variant: "destructive"});
-              }}
+              onError={onParamsError}
             />
           </div>
         </div>
