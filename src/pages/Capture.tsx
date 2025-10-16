@@ -5,7 +5,6 @@ import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Camera, ImageOff, Loader2, Sparkles, RefreshCw, Mic, MicOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -448,14 +447,14 @@ export default function Capture() {
     if (!playbackUrl) return null;
     return [
       {
+        type: 'webrtc' as const,
         src: playbackUrl,
         mime: 'video/h264' as const,
-        type: 'webrtc' as const,
+        width: 512,
+        height: 512,
       },
-    ] as const;
+    ];
   }, [playbackUrl]);
-
-  // DaydreamCanvas manages init/updates; no debounce here
 
   // Keep DaydreamCanvas params in sync with UI state by changing props
   const canvasParams: StreamDiffusionParams = useMemo(() => {
