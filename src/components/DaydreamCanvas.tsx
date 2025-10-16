@@ -104,25 +104,26 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
   onReady,
   onError,
 }) => {
+    // Derive video source settings for stable dependencies
+    const sourceVideoStream = videoSource.type === 'stream' ? videoSource.stream : null;
+    const sourceCanvas = videoSource.type === 'canvas' ? videoSource.canvas : null;
+    const cameraFacingMode = videoSource.type === 'camera' ? videoSource.facingMode : 'user';
+    const mirrorFront = videoSource.type === 'camera' ? (videoSource.mirrorFront ?? true) : true;
+
+    // Derive audio source settings for stable dependencies
+    const sourceAudioStream = audioSource?.type === 'stream' ? audioSource.stream : null;
+    const microphoneConstraints = audioSource?.type === 'microphone' ? audioSource.constraints : undefined;
+
     // Derive FPS from video source (try to match source, default to 24)
     const fps = useMemo(() => {
-      if (videoSource.type === 'stream') {
-        const videoTrack = videoSource.stream.getVideoTracks()[0];
+      if (videoSource.type === 'stream' && sourceVideoStream) {
+        const videoTrack = sourceVideoStream.getVideoTracks()[0];
         const settings = videoTrack?.getSettings();
         return settings?.frameRate || 24;
       }
       return 24; // Default for camera and canvas sources
-    }, [videoSource]);
+    }, [videoSource.type, sourceVideoStream]);
 
-    // Derive camera settings
-    const useCamera = videoSource.type === 'camera';
-    const cameraFacingMode = videoSource.type === 'camera' ? videoSource.facingMode : 'user';
-    const mirrorFront = videoSource.type === 'camera' ? (videoSource.mirrorFront ?? true) : true;
-
-    // Derive audio settings
-    const useMicrophone = audioSource?.type === 'microphone';
-    const microphoneConstraints = audioSource?.type === 'microphone' ? audioSource.constraints : undefined;
-    const externalAudioSource = audioSource?.type === 'stream' ? audioSource.stream : null;
     // Canvas and optional hidden video element for MediaStream sources
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -212,7 +213,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       // Determine the effective video stream
       let effectiveStream: MediaStream | null = null;
       if (videoSource.type === 'stream') {
-        effectiveStream = videoSource.stream;
+        effectiveStream = sourceVideoStream;
       } else if (videoSource.type === 'camera') {
         effectiveStream = ownedCameraStream;
       }
@@ -227,11 +228,11 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       video.play().catch(() => {
         // Silent fail - autoplay handles this
       });
-    }, [videoSource, ownedCameraStream]);
+    }, [videoSource.type, sourceVideoStream, ownedCameraStream]);
 
     // Optionally obtain camera stream internally
     useEffect(() => {
-      if (!useCamera || !isStarted) {
+      if (videoSource.type !== 'camera' || !isStarted) {
         // Clean up owned camera stream when switching away from camera or when stopped
         if (ownedCameraStream) {
           ownedCameraStream.getTracks().forEach(t => t.stop());
@@ -283,7 +284,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         });
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [useCamera, cameraFacingMode, onError, size, isStarted]);
+    }, [videoSource.type, cameraFacingMode, onError, size, isStarted]);
 
     // Start/stop render-copy loop based on sources
     const startCopyLoop = useCallback(() => {
@@ -305,8 +306,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
               const sizePx = enforceSquare ? size : Math.min(size, Math.max(canvasRef.current.width, canvasRef.current.height));
 
               // Draw from source canvas (type: 'canvas')
-              if (videoSource.type === 'canvas') {
-                const sourceCanvas = videoSource.canvas;
+              if (videoSource.type === 'canvas' && sourceCanvas) {
                 const srcW = sourceCanvas.width;
                 const srcH = sourceCanvas.height;
                 if (srcW > 0 && srcH > 0) {
@@ -322,7 +322,8 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
                 }
               }
               // Draw from hidden video element (types: 'stream' or 'camera')
-              else if (hiddenVideoRef.current && hiddenVideoRef.current.readyState >= hiddenVideoRef.current.HAVE_CURRENT_DATA) {
+              else if (hiddenVideoRef.current) {
+                if (hiddenVideoRef.current.readyState >= hiddenVideoRef.current.HAVE_CURRENT_DATA) {
                 const v = hiddenVideoRef.current;
                 const srcW = v.videoWidth;
                 const srcH = v.videoHeight;
@@ -347,23 +348,19 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
                   if (needMirror) {
                     ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
                   }
-                } else {
-                  // Video source not ready yet - maintain black background
-                  ctx.fillStyle = '#000000';
-                  ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
                 }
-              } else {
-                // No video source available - maintain black background
-                ctx.fillStyle = '#000000';
-                ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                } else {
+                  // Video element exists but not ready - skip draw
+                }
               }
+              // No video source available - skip draw
             }
           }
         }
         rafIdRef.current = requestAnimationFrame(tick);
       };
       rafIdRef.current = requestAnimationFrame(tick);
-    }, [cameraFacingMode, cover, enforceSquare, fps, mirrorFront, size, videoSource]);
+    }, [cameraFacingMode, cover, enforceSquare, fps, mirrorFront, size, videoSource.type, sourceCanvas]);
 
     const stopCopyLoop = useCallback(() => {
       runningCopyLoopRef.current = false;
@@ -490,7 +487,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
     // Request built-in microphone on demand
     const requestMicrophone = useCallback(async (): Promise<boolean> => {
       try {
-        if (!useMicrophone) return false;
+        if (audioSource?.type !== 'microphone') return false;
         const constraints: MediaStreamConstraints = {
           audio: microphoneConstraints || { echoCancellation: true, noiseSuppression: true },
           video: false,
@@ -517,13 +514,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         onError?.(e);
         return false;
       }
-    }, [microphoneConstraints, onError, useMicrophone]);
-
-    const setMicrophoneEnabled = useCallback((enabled: boolean) => {
-      if (currentAudioTrackRef.current && currentAudioTrackRef.current.kind === 'audio') {
-        currentAudioTrackRef.current.enabled = enabled;
-      }
-    }, []);
+    }, [microphoneConstraints, onError, audioSource?.type]);
 
     // Build the publishing MediaStream (canvas video + audio)
     const buildPublishStream = useCallback(async (): Promise<MediaStream> => {
@@ -539,11 +530,11 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       let audioTrack: MediaStreamTrack | null = null;
 
       // Check for external audio stream
-      if (externalAudioSource) {
-        if (externalAudioSource instanceof MediaStream) {
-          audioTrack = externalAudioSource.getAudioTracks()[0] || null;
-        } else if ('kind' in externalAudioSource) {
-          audioTrack = externalAudioSource.kind === 'audio' ? externalAudioSource : null;
+      if (sourceAudioStream) {
+        if (sourceAudioStream instanceof MediaStream) {
+          audioTrack = sourceAudioStream.getAudioTracks()[0] || null;
+        } else if ('kind' in sourceAudioStream) {
+          audioTrack = sourceAudioStream.kind === 'audio' ? sourceAudioStream : null;
         }
       }
 
@@ -569,7 +560,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       publishStreamRef.current = publishStream;
       currentAudioTrackRef.current = audioTrack;
       return publishStream;
-    }, [externalAudioSource, createSilentAudioTrack, enforceSquare, fps, size]);
+    }, [sourceAudioStream, createSilentAudioTrack, enforceSquare, fps, size]);
 
     // Replace audio track live
     const replaceAudioSource = useCallback(
@@ -692,6 +683,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         });
         if (error) throw error;
       } catch (e) {
+        console.error('[DaydreamCanvas] Params update failed:', e);
         onError?.(e);
       } finally {
         paramsInFlightRef.current = false;
@@ -781,7 +773,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         // ready
 
         // NOW start the copy loop to populate the canvas with actual content
-        if (videoSource || useCamera) startCopyLoop();
+        startCopyLoop();
 
         // Open the init window for params updates (3s gate)
         readyForParamUpdatesRef.current = false;
@@ -795,7 +787,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         onError?.(e);
         throw e;
       }
-    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, startCopyLoop, useCamera, videoSource]);
+    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, startCopyLoop, videoSource.type]);
 
     // Stop publishing and cleanup
     const stop = useCallback(async () => {
@@ -808,7 +800,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         try {
           pcRef.current.close();
         } catch (e) {
-          /* Connection may already be closed */
+          // RTCPeerConnection already closed or error
         }
         pcRef.current = null;
       }
@@ -819,7 +811,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
           try {
             t.stop();
           } catch (e) {
-            /* Track may already be stopped */
+            // Track already stopped or error
           }
         });
         publishStreamRef.current = null;
@@ -830,7 +822,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         try {
           silentAudioTrackRef.current.stop();
         } catch (e) {
-          /* Track may already be stopped */
+          // Silent audio track already stopped or error
         }
         silentAudioTrackRef.current = null;
       }
@@ -838,7 +830,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         try {
           audioContextRef.current.close();
         } catch (e) {
-          /* Context may already be closed */
+          // Audio context already closed or error
         }
         audioContextRef.current = null;
       }
@@ -850,8 +842,6 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       streamIdRef.current = null;
       playbackIdRef.current = null;
       playbackUrlRef.current = null;
-
-      // stopped
     }, [stopCopyLoop]);
 
     // Background auto-stop/start (mobile default)
