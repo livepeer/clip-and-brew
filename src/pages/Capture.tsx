@@ -204,10 +204,31 @@ export default function Capture() {
 
   const selectCamera = useCallback(async (type: 'user' | 'environment') => {
     setCameraType(type);
+    setShowCameraSelection(false); // Hide camera selection screen
     // Don't set initial prompt - let user configure it
     setPrompt('');
     // Don't start stream yet - wait for user to configure params and hit "Start"
   }, []);
+
+  // Start stream immediately when component mounts (pre-warming)
+  // We use a separate state to track if we should show camera selection
+  const [showCameraSelection, setShowCameraSelection] = useState(true);
+
+  useEffect(() => {
+    // Start pre-warming stream as soon as component loads
+    // We'll use a default camera type for pre-warming, but still show selection on mobile
+    if (!cameraType) {
+      setCameraType('user'); // This will trigger the canvas to start with blank video
+
+      // On mobile, still show camera selection screen
+      if (hasMultipleCameras()) {
+        setShowCameraSelection(true);
+      } else {
+        // Desktop - skip camera selection, go straight to param setup
+        setShowCameraSelection(false);
+      }
+    }
+  }, [cameraType]);
 
   const startStream = useCallback(async () => {
     if (!cameraType) return;
@@ -220,13 +241,13 @@ export default function Capture() {
       setPrompt(finalPrompt);
     }
 
+    setLoading(false); // Ensure loading is false BEFORE setting setupComplete
     setSetupComplete(true);
-    await initializeStream(cameraType, finalPrompt);
-  }, [cameraType, prompt, initializeStream]);
+  }, [cameraType, prompt]);
 
   // Auto-start camera on desktop (non-mobile devices)
   useEffect(() => {
-    if (!autoStartChecked && cameraType === null && !loading) {
+    if (!autoStartChecked && !loading) {
       const shouldAutoStart = !hasMultipleCameras();
       if (shouldAutoStart) {
         setAutoStartChecked(true);
@@ -237,7 +258,7 @@ export default function Capture() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStartChecked, cameraType, loading]);
+  }, [autoStartChecked, loading]);
 
   // DaydreamCanvas abstracts streaming; no local WHIP logic here
 
@@ -483,9 +504,12 @@ export default function Capture() {
   const canvasParams: StreamDiffusionParams = useMemo(() => {
     const tIndex = calculateTIndexList(intensity[0], quality[0]);
 
+    // Use "passthrough" if prompt is empty (during setup phase)
+    const effectivePrompt = prompt.trim() || 'passthrough';
+
     const base: StreamDiffusionParams = {
       model_id: 'stabilityai/sdxl-turbo',
-      prompt,
+      prompt: effectivePrompt,
       negative_prompt: 'blurry, low quality, flat, 2d, distorted',
       t_index_list: tIndex,
       seed: 42,
@@ -706,10 +730,94 @@ export default function Capture() {
     setLoading(false);
   }, [setLoading]);
 
+  // Determine video source based on setup state
+  const videoSource = useMemo(() => {
+    if (!cameraType) {
+      // Pre-warming with blank video during camera selection and param setup
+      return { type: 'blank' as const };
+    }
+    // Switch to camera after "Start" is clicked
+    return {
+      type: 'camera' as const,
+      facingMode: cameraType,
+      mirrorFront: true,
+    };
+  }, [cameraType]);
+
+  // Render content based on current state
+  let content;
+
+  // Camera selection screen - shown on mobile devices
+  if (showCameraSelection) {
+    const showMultipleCameras = hasMultipleCameras();
+
+    content = (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-neutral-950 text-neutral-200">
+        <div className="max-w-md w-full text-center space-y-8">
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent mb-2">
+              {showMultipleCameras ? 'Choose Camera' : 'Start Camera'}
+            </h1>
+            <p className="text-neutral-400">
+              {showMultipleCameras ? 'Select which camera to use' : 'Start your webcam to begin'}
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {showMultipleCameras ? (
+              <>
+                <Button
+                  onClick={() => selectCamera('user')}
+                  className="w-full h-20 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 transition-all duration-200"
+                  variant="outline"
+                >
+                  <div className="flex items-center gap-4">
+                    <Camera className="w-8 h-8 text-neutral-300" />
+                    <div className="text-left">
+                      <div className="font-semibold text-neutral-100">Front Camera</div>
+                      <div className="text-sm text-neutral-400">Selfie mode</div>
+                    </div>
+                  </div>
+                </Button>
+
+                <Button
+                  onClick={() => selectCamera('environment')}
+                  className="w-full h-20 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 transition-all duration-200"
+                  variant="outline"
+                >
+                  <div className="flex items-center gap-4">
+                    <Camera className="w-8 h-8 text-neutral-300" />
+                    <div className="text-left">
+                      <div className="font-semibold text-neutral-100">Back Camera</div>
+                      <div className="text-sm text-neutral-400">Environment mode</div>
+                    </div>
+                  </div>
+                </Button>
+              </>
+            ) : (
+              <Button
+                onClick={() => selectCamera('user')}
+                className="w-full h-20 bg-gradient-to-r from-primary to-accent text-white transition-all duration-200"
+              >
+                <div className="flex items-center gap-4">
+                  <Camera className="w-8 h-8" />
+                  <div className="text-left">
+                    <div className="font-semibold text-lg">Start Webcam</div>
+                    <div className="text-sm opacity-90">Begin recording</div>
+                  </div>
+                </div>
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
   // Parameter setup screen - shown after camera selection but before stream starts
-  if (cameraType && !setupComplete) {
-    return (
+  else if (!setupComplete) {
+    content = (
       <div className="min-h-screen flex flex-col items-center justify-between p-6 bg-neutral-950 text-neutral-200">
+
         <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md mx-auto space-y-4">
           <div className="text-center space-y-1">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent">
@@ -882,93 +990,25 @@ export default function Capture() {
         </div>
       </div>
     );
+  } else {
+    // Main streaming view is now handled by the secret container below
+    content = null;
   }
 
-  if (!cameraType) {
-    // Show loading state while auto-starting on desktop
-    if (loading) {
-      return (
-        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-background">
-          <div className="max-w-md w-full text-center space-y-8">
-            <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto" />
-            <p className="text-muted-foreground">Starting camera...</p>
-          </div>
-        </div>
-      );
-    }
-
-    // Camera selection screen (only shown on mobile/tablet devices)
-    const showMultipleCameras = hasMultipleCameras();
-
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-neutral-950 text-neutral-200">
-        <div className="max-w-md w-full text-center space-y-8">
-          <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent mb-2">
-              {showMultipleCameras ? 'Choose Camera' : 'Start Camera'}
-            </h1>
-            <p className="text-neutral-400">
-              {showMultipleCameras ? 'Select which camera to use' : 'Start your webcam to begin'}
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            {showMultipleCameras ? (
-              <>
-                <Button
-                  onClick={() => selectCamera('user')}
-                  className="w-full h-20 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 transition-all duration-200"
-                  variant="outline"
-                >
-                  <div className="flex items-center gap-4">
-                    <Camera className="w-8 h-8 text-neutral-300" />
-                    <div className="text-left">
-                      <div className="font-semibold text-neutral-100">Front Camera</div>
-                      <div className="text-sm text-neutral-400">Selfie mode</div>
-                    </div>
-                  </div>
-                </Button>
-
-                <Button
-                  onClick={() => selectCamera('environment')}
-                  className="w-full h-20 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850 transition-all duration-200"
-                  variant="outline"
-                >
-                  <div className="flex items-center gap-4">
-                    <Camera className="w-8 h-8 text-neutral-300" />
-                    <div className="text-left">
-                      <div className="font-semibold text-neutral-100">Back Camera</div>
-                      <div className="text-sm text-neutral-400">Environment mode</div>
-                    </div>
-                  </div>
-                </Button>
-              </>
-            ) : (
-              <Button
-                onClick={() => selectCamera('user')}
-                className="w-full h-20 bg-gradient-to-r from-primary to-accent text-white transition-all duration-200"
-              >
-                <div className="flex items-center gap-4">
-                  <Camera className="w-8 h-8" />
-                  <div className="text-left">
-                    <div className="font-semibold text-lg">Start Webcam</div>
-                    <div className="text-sm opacity-90">Begin recording</div>
-                  </div>
-                </div>
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // Render content with secret pre-warmed streaming view
   return (
-    <div className="fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200">
-      {/* Fixed Video Section - Square but smaller, starts from top */}
-      <div className={`flex-shrink-0 px-4 pt-4 pb-3 bg-neutral-950 transition-all duration-700 ${
-        loading ? 'opacity-0 scale-95' : 'opacity-100 scale-100'
-      }`}>
+    <>
+      {/* Secret streaming container - hidden during setup, visible after */}
+      {cameraType && (
+        <div
+          className={
+            setupComplete
+              ? "fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200"
+              : "fixed top-0 left-0 w-1 h-1 opacity-0 pointer-events-none overflow-hidden"
+          }
+        >
+          {/* Video Section with Output Player */}
+      <div className="flex-shrink-0 px-4 pt-4 pb-3 bg-neutral-950">
         <div className="relative w-full max-w-md mx-auto aspect-square bg-neutral-950 rounded-3xl overflow-hidden border border-neutral-900 shadow-lg">
           <StudioRecorder
             ref={studioRecorderRef}
@@ -1022,11 +1062,7 @@ export default function Capture() {
             <DaydreamCanvas
               size={512}
               className="w-full h-full object-cover"
-              videoSource={{
-                type: 'camera',
-                facingMode: cameraType === 'user' ? 'user' : 'environment',
-                mirrorFront: true,
-              }}
+              videoSource={videoSource}
               audioSource={
                 micEnabled
                   ? { type: 'microphone' }
@@ -1042,7 +1078,7 @@ export default function Capture() {
           <div className="absolute bottom-3 left-3">
             <Button
               onClick={toggleMicrophone}
-              disabled={loading || !playbackId}
+              disabled={!playbackId}
               size="icon"
               variant={micEnabled ? "default" : "secondary"}
               className={`w-12 h-12 rounded-full shadow-lg transition-all duration-200 ${
@@ -1066,24 +1102,21 @@ export default function Capture() {
 
       {/* Scrollable Controls Section */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
-        <div className="max-w-md mx-auto space-y-4">
+            <div className="max-w-md mx-auto space-y-4">
           {/* Record Button */}
           {!captureSupported && (
             <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-sm text-yellow-200">
               ⚠️ Video capture not supported on this browser. Recording is disabled.
             </div>
           )}
-          <div className={`transition-all duration-700 ${
-            loading ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'
-          }`}>
-            <Button
-              onClick={isMobile ? undefined : toggleRecording}
-              onPointerDown={isMobile ? startRecording : undefined}
-              onPointerUp={isMobile ? stopRecording : undefined}
-              onPointerLeave={isMobile ? stopRecording : undefined}
-              onContextMenu={(e) => e.preventDefault()}
-              disabled={loading || uploadingClip || !playbackId || !captureSupported || !isPlaying}
-              className="w-full h-14 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed select-none touch-manipulation"
+          <Button
+            onClick={isMobile ? undefined : toggleRecording}
+            onPointerDown={isMobile ? startRecording : undefined}
+            onPointerUp={isMobile ? stopRecording : undefined}
+            onPointerLeave={isMobile ? stopRecording : undefined}
+            onContextMenu={(e) => e.preventDefault()}
+                disabled={uploadingClip || !playbackId || !captureSupported || !isPlaying}
+            className="w-full h-14 bg-gradient-to-r from-neutral-200 to-neutral-500 text-neutral-900 font-semibold rounded-2xl hover:from-neutral-300 hover:to-neutral-600 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed select-none touch-manipulation"
             style={{
               WebkitUserSelect: 'none',
               WebkitTouchCallout: 'none',
@@ -1101,7 +1134,7 @@ export default function Capture() {
                 <Loader2 className="w-5 h-5 animate-spin" />
                 {uploadProgress || 'Uploading clip...'}
               </span>
-            ) : loading || !isPlaying ? (
+                ) : !isPlaying ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="w-5 h-5 animate-spin" />
                 Starting stream...
@@ -1112,13 +1145,10 @@ export default function Capture() {
                 {isMobile ? 'Hold to Brew' : 'Click to Start Brewing'}
               </span>
             )}
-            </Button>
-          </div>
+          </Button>
 
           {/* Controls */}
-          <div className={`bg-neutral-950 rounded-3xl p-5 border border-neutral-800 space-y-4 shadow-inner transition-all duration-700 delay-150 ${
-            loading ? 'opacity-0 translate-y-8' : 'opacity-100 translate-y-0'
-          }`}>
+          <div className="bg-neutral-950 rounded-3xl p-5 border border-neutral-800 space-y-4 shadow-inner">
             <div>
               <label className="text-sm font-medium mb-2 block text-neutral-300">Prompt</label>
               <div className="flex items-start gap-2">
@@ -1165,7 +1195,6 @@ export default function Capture() {
                             alt="Selected texture"
                             className="w-8 h-8 object-cover rounded"
                           />
-
                         </>
                         ) : (
                           <ImageOff className="w-5 h-5 text-neutral-400" />
@@ -1184,12 +1213,8 @@ export default function Capture() {
                           setSelectedTexture(null);
                           setTexturePopoverOpen(false);
                         }}
-                        variant={selectedTexture === null ? "default" : "outline"}
-                        className={`aspect-square ${
-                          selectedTexture === null
-                            ? "bg-neutral-800 text-neutral-100"
-                            : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"
-                        }`}
+                            variant="outline"
+                            className="aspect-square p-0 overflow-hidden bg-neutral-950 border-neutral-800 hover:border-neutral-600"
                       >
                         <ImageOff className="w-5 h-5 text-neutral-400" />
                       </Button>
@@ -1200,17 +1225,13 @@ export default function Capture() {
                             setSelectedTexture(texture.id);
                             setTexturePopoverOpen(false);
                           }}
-                          variant={selectedTexture === texture.id ? "default" : "outline"}
-                          className={`aspect-square p-0 overflow-hidden ${
-                            selectedTexture === texture.id
-                              ? "ring-2 ring-neutral-400"
-                              : "border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-850"
-                          }`}
+                              variant="outline"
+                              className="aspect-square p-0 overflow-hidden bg-neutral-950 border-neutral-800 hover:border-neutral-600"
                         >
                           <img
                             src={texture.url}
                             alt={texture.name}
-                            className="w-full h-full object-cover rounded-lg"
+                                className="w-full h-full object-cover"
                           />
                         </Button>
                       ))}
@@ -1218,35 +1239,42 @@ export default function Capture() {
                   </PopoverContent>
                 </Popover>
 
-                {selectedTexture && (
                   <div className="flex-1">
-                    <label className="text-sm font-medium block mb-2 text-neutral-300">
-                      Strength: {textureWeight[0].toFixed(2)}
-                    </label>
+                      <div className="text-xs text-neutral-400 mb-1.5">
+                        {selectedTexture
+                          ? TEXTURES.find((t) => t.id === selectedTexture)?.name
+                          : 'No texture'}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 whitespace-nowrap">Weight:</label>
                     <Slider
                       value={textureWeight}
                       onValueChange={setTextureWeight}
                       min={0}
                       max={1}
                       step={0.01}
-                      className="w-full accent-neutral-400"
+                          className="flex-1 accent-neutral-400"
+                          disabled={!selectedTexture}
                     />
+                        <span className="text-xs text-neutral-400 w-10 text-right">
+                          {textureWeight[0].toFixed(2)}
+                        </span>
                   </div>
-                )}
+                    </div>
               </div>
             </div>
 
             <div>
               <label className="text-sm font-medium mb-2 block text-neutral-300">
-                Intensity: {intensity[0].toFixed(1)}
+                    Intensity: {intensity[0].toFixed(2)}
               </label>
               <Slider
                 value={intensity}
                 onValueChange={setIntensity}
-                min={1}
+                    min={0}
                 max={10}
                 step={0.1}
-                className="w-full accent-neutral-400 h-6"
+                    className="w-full accent-neutral-400 h-6"
               />
             </div>
 
@@ -1260,12 +1288,17 @@ export default function Capture() {
                 min={0}
                 max={1}
                 step={0.01}
-                className="w-full accent-neutral-400 h-6"
+                    className="w-full accent-neutral-400 h-6"
               />
             </div>
           </div>
         </div>
       </div>
     </div>
+      )}
+
+      {/* Main content (camera selection / setup screens) */}
+      {content}
+    </>
   );
 }

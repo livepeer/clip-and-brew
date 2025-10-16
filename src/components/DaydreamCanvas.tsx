@@ -150,13 +150,6 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
     const playbackUrlRef = useRef<string | null>(null);
     const readyForParamUpdatesRef = useRef<boolean>(false);
 
-    // Internal status tracking (no external API)
-
-    // Render loop control (for copying from video/canvas sources)
-    const rafIdRef = useRef<number | null>(null);
-    const lastTickRef = useRef<number>(0);
-    const runningCopyLoopActive = useRef<boolean>(false);
-
     // Flags for background auto-restart
     const wasRunningRef = useRef<boolean>(false);
 
@@ -211,51 +204,23 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       };
     }, []);
 
-    // Update video source when stream changes
-    useEffect(() => {
-      const video = hiddenVideoRef.current;
-      if (!video) return;
-
-      // Determine the effective video stream
-      let effectiveStream: MediaStream | null = null;
-      if (videoSource.type === 'stream') {
-        effectiveStream = sourceVideoStream;
-      } else if (videoSource.type === 'camera') {
-        effectiveStream = ownedCameraStream;
-      }
-      // canvas and blank types don't need to use the hidden video element
-
-      if (!effectiveStream) {
-        video.srcObject = null;
-        return;
-      }
-
-      video.srcObject = effectiveStream;
-      video.play().catch(() => {
-        // Silent fail - autoplay handles this
-      });
-    }, [videoSource.type, sourceVideoStream, ownedCameraStream]);
-
     // Optionally obtain camera stream internally
     useEffect(() => {
-      if (videoSource.type !== 'camera' || !isStarted) {
-        // Clean up owned camera stream when switching away from camera or when stopped
-        if (ownedCameraStream) {
-          ownedCameraStream.getTracks().forEach(t => t.stop());
-          setOwnedCameraStream(null);
+      // Clean up previous camera stream before starting new one
+      // This is crucial when switching between front/back cameras
+      setOwnedCameraStream(currStream => {
+        if (currStream) {
+          currStream.getTracks().forEach(t => t.stop());
         }
+        return null;
+      });
+
+      if (videoSource.type !== 'camera' || !isStarted) {
         return;
       }
 
       let cancelled = false;
       let localStream: MediaStream | null = null;
-
-      // Clean up previous camera stream before starting new one
-      // This is crucial when switching between front/back cameras
-      if (ownedCameraStream) {
-        ownedCameraStream.getTracks().forEach(t => t.stop());
-        setOwnedCameraStream(null);
-      }
 
       (async () => {
         try {
@@ -283,100 +248,132 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         }
         // Also clean up the owned stream state
         setOwnedCameraStream(prev => {
-          if (prev) {
+          if (prev && prev !== localStream) {
             prev.getTracks().forEach(t => t.stop());
           }
           return null;
         });
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [videoSource.type, cameraFacingMode, onError, size, isStarted]);
 
-    // Start/stop render-copy loop based on sources
-    const startCopyLoop = useCallback(() => {
-      if (runningCopyLoopActive.current) return;
-      runningCopyLoopActive.current = true;
+    // Update video source when stream changes
+    useEffect(() => {
+      const video = hiddenVideoRef.current;
+      if (!video) return;
 
-      const draw = () => {
-        // Draw one frame from the active source, if available
-        if (!canvasRef.current) {
+      // Determine the effective video stream
+      let effectiveStream: MediaStream | null = null;
+      if (videoSource.type === 'stream') {
+        effectiveStream = sourceVideoStream;
+      } else if (videoSource.type === 'camera') {
+        effectiveStream = ownedCameraStream;
+      }
+      // canvas and blank types don't need to use the hidden video element
+
+      if (!effectiveStream) {
+        video.srcObject = null;
+        return;
+      }
+
+      console.log('useEffect video source', videoSource.type, effectiveStream);
+      video.srcObject = effectiveStream;
+      video.play().catch((e) => {
+        // Silent fail - autoplay handles this
+        console.error('Error playing video source', e);
+      });
+    }, [videoSource.type, sourceVideoStream, ownedCameraStream]);
+
+    // Function to draw the video source to the canvas
+
+    const draw = useCallback(() => {
+      // Draw one frame from the active source, if available
+      if (!canvasRef.current) {
+        return;
+      }
+      const ctx = canvasRef.current.getContext('2d', { alpha: false });
+      if (!ctx) {
+        return;
+      }
+      const sizePx = enforceSquare ? size : Math.min(size, Math.max(canvasRef.current.width, canvasRef.current.height));
+
+      // Draw black frame (type: 'blank')
+      if (videoSource.type === 'blank') {
+        // Clear canvas and fill with black
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      // Draw from source canvas (type: 'canvas')
+      else if (videoSource.type === 'canvas' && sourceCanvas) {
+        const srcW = sourceCanvas.width;
+        const srcH = sourceCanvas.height;
+        if (srcW <= 0 || srcH <= 0) {
           return;
         }
-        const ctx = canvasRef.current.getContext('2d', { alpha: false });
-        if (!ctx) {
-          return;
-        }
-        const sizePx = enforceSquare ? size : Math.min(size, Math.max(canvasRef.current.width, canvasRef.current.height));
+        // Clear before drawing
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-        // Draw black frame (type: 'blank')
-        if (videoSource.type === 'blank') {
-          // Clear canvas and fill with black
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
-        // Draw from source canvas (type: 'canvas')
-        else if (videoSource.type === 'canvas' && sourceCanvas) {
-          const srcW = sourceCanvas.width;
-          const srcH = sourceCanvas.height;
-          if (srcW <= 0 || srcH <= 0) {
-            return;
-          }
-          // Clear before drawing
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-          if (cover) {
-            const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
-            ctx.drawImage(sourceCanvas, dx, dy, drawWidth, drawHeight);
-          } else {
-            ctx.drawImage(sourceCanvas, 0, 0, sizePx, sizePx);
-          }
-        }
-        // Draw from hidden video element (types: 'stream' or 'camera')
-        else if (videoSource.type === 'stream' || videoSource.type === 'camera') {
-          if (!hiddenVideoRef.current || hiddenVideoRef.current.readyState < hiddenVideoRef.current.HAVE_CURRENT_DATA) {
-            // Video element exists but not ready - skip draw
-            return;
-          }
-
-          const v = hiddenVideoRef.current;
-          const srcW = v.videoWidth;
-          const srcH = v.videoHeight;
-          if (srcW <= 0 || srcH <= 0) {
-            return;
-          }
-
-          // Clear before drawing
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-          // Mirror for front camera (user-facing)
-          const needMirror = mirrorFront && cameraFacingMode === 'user' && videoSource.type === 'camera';
-          if (needMirror) {
-            ctx.setTransform(-1, 0, 0, 1, sizePx, 0);
-          }
-
-          if (cover) {
-            const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
-            ctx.drawImage(v, dx, dy, drawWidth, drawHeight);
-          } else {
-            // Scale to fit (no distortion)
-            ctx.drawImage(v, 0, 0, sizePx, sizePx);
-          }
-
-          if (needMirror) {
-            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
-          }
+        if (cover) {
+          const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
+          ctx.drawImage(sourceCanvas, dx, dy, drawWidth, drawHeight);
         } else {
-          onError?.(new Error(`Unknown video source type: ${videoSource.type}`));
+          ctx.drawImage(sourceCanvas, 0, 0, sizePx, sizePx);
+        }
+      }
+      // Draw from hidden video element (types: 'stream' or 'camera')
+      else if (videoSource.type === 'stream' || videoSource.type === 'camera') {
+        if (!hiddenVideoRef.current || hiddenVideoRef.current.readyState < hiddenVideoRef.current.HAVE_CURRENT_DATA) {
+          // Video element exists but not ready - skip draw
           return;
         }
-      };
 
+        const v = hiddenVideoRef.current;
+        const srcW = v.videoWidth;
+        const srcH = v.videoHeight;
+        if (srcW <= 0 || srcH <= 0) {
+          return;
+        }
+
+        // Clear before drawing
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+        // Mirror for front camera (user-facing)
+        const needMirror = mirrorFront && cameraFacingMode === 'user' && videoSource.type === 'camera';
+        if (needMirror) {
+          ctx.setTransform(-1, 0, 0, 1, sizePx, 0);
+        }
+
+        if (cover) {
+          const { dx, dy, drawWidth, drawHeight } = computeCoverDrawRect(srcW, srcH, sizePx);
+          ctx.drawImage(v, dx, dy, drawWidth, drawHeight);
+        } else {
+          // Scale to fit (no distortion)
+          ctx.drawImage(v, 0, 0, sizePx, sizePx);
+        }
+
+        if (needMirror) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+        }
+      } else {
+        onError?.(new Error(`Unknown video source type: ${videoSource.type}`));
+        return;
+      }
+    }, [cameraFacingMode, cover, enforceSquare, mirrorFront, size, videoSource.type, sourceCanvas, onError]);
+
+    // Effect for render-copy loop based on sources
+    const rafIdRef = useRef<number | null>(null);
+    const lastTickRef = useRef<number>(0);
+    useEffect(() => {
+      if (!isStarted) return;
+
+      let cancelled = false;
       const intervalMs = 1000 / Math.max(1, fps);
       lastTickRef.current = performance.now();
+
       const tick = () => {
+        if (cancelled) return;
+
         try {
-          if (!runningCopyLoopActive.current) return;
           const now = performance.now();
           const elapsed = now - lastTickRef.current;
 
@@ -390,15 +387,15 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         }
       };
       rafIdRef.current = requestAnimationFrame(tick);
-    }, [cameraFacingMode, cover, enforceSquare, fps, mirrorFront, size, videoSource.type, sourceCanvas, onError]);
 
-    const stopCopyLoop = useCallback(() => {
-      runningCopyLoopActive.current = false;
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    }, []);
+      return () => {
+        cancelled = true;
+        if (rafIdRef.current !== null) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = null;
+        }
+      };
+    }, [isStarted, fps, draw]);
 
     // Attempt to create a silent audio track
     const createSilentAudioTrack = useCallback((): MediaStreamTrack | null => {
@@ -719,10 +716,6 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
 
         // Notify caller once we have both IDs and playback URL
         onReady?.({ streamId: streamData.id, playbackId: streamData.output_playback_id, playbackUrl: playbackUrlRef.current });
-        // ready
-
-        // NOW start the copy loop to populate the canvas with actual content
-        startCopyLoop();
 
         // Open the init window for params updates (3s gate)
         readyForParamUpdatesRef.current = false;
@@ -736,12 +729,11 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
         onError?.(e);
         throw e;
       }
-    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params, startCopyLoop]);
+    }, [buildPublishStream, enqueueParamsUpdate, onError, onReady, params]);
 
     // Stop publishing and cleanup
     const stop = useCallback(async () => {
       setIsStarted(false);
-      stopCopyLoop();
       readyForParamUpdatesRef.current = false;
 
       // Close RTCPeerConnection
@@ -791,7 +783,7 @@ export const DaydreamCanvas: React.FC<DaydreamCanvasProps> = ({
       streamIdRef.current = null;
       playbackIdRef.current = null;
       playbackUrlRef.current = null;
-    }, [stopCopyLoop]);
+    }, []);
 
     // Background auto-stop/start (mobile default)
     useEffect(() => {
