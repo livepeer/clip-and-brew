@@ -46,9 +46,24 @@ export default function Capture() {
   // - "2-stream": Active streaming phase with live video output and recording controls
   // Note: The stream is always pre-loading in the background (hidden container) during
   // phases 0 and 1, then becomes visible when transitioning to phase 2
-  const [uiPhase, setUiPhase] = useState<"0-camera-selection" | "1-design-brew" | "2-stream">(
-    hasMultipleCameras() ? "0-camera-selection" : "1-design-brew"
+  // Transition phases: {idx+1}-{phase}-fade-out for smooth animations (fade-in handled by CSS)
+  const [uiPhase, setUiPhase] = useState<
+    | "0-camera-selection"
+    | "1-camera-selection-fade-out"
+    | "2-design-brew"
+    | "3-design-brew-fade-out"
+    | "4-stream"
+  >(
+    hasMultipleCameras() ? "0-camera-selection" : "2-design-brew"
   );
+
+  // Helper function to transition between phases with fade effects
+  const transitionToPhase = useCallback((intermediate: typeof uiPhase, timeout: number, next: typeof uiPhase) => {
+    setUiPhase(intermediate);
+    setTimeout(() => {
+      setUiPhase(next);
+    }, timeout);
+  }, []);
 
   const [cameraType, setCameraType] = useState<"user" | "environment" | null>(
     null
@@ -109,7 +124,6 @@ export default function Capture() {
 
   const initializeStream = useCallback(
     async (_type: "user" | "environment", _initialPrompt: string) => {
-      // Simplified: streaming is handled by DaydreamCanvas; just show loading until onReady
       setLoading(true);
     },
     []
@@ -118,11 +132,10 @@ export default function Capture() {
 
   const selectCamera = useCallback(async (type: "user" | "environment") => {
     setCameraType(type);
-    setUiPhase("1-design-brew"); // Move to design-brew phase
+    transitionToPhase("1-camera-selection-fade-out", 300, "2-design-brew");
     // Reset prompt for new camera
     setBrewParams((prev) => ({ ...prev, prompt: "" }));
-    // Don't start stream yet - wait for user to configure params and hit "Start"
-  }, []);
+  }, [transitionToPhase]);
 
   const startStream = useCallback(async () => {
     if (!cameraType) {
@@ -141,9 +154,9 @@ export default function Capture() {
       return;
     }
 
-    setLoading(false); // Ensure loading is false BEFORE setting uiPhase
-    setUiPhase("2-stream");
-  }, [cameraType, brewParams.prompt, toast]);
+    setLoading(false); // Ensure loading is false BEFORE transitioning
+    transitionToPhase("3-design-brew-fade-out", 300, "4-stream");
+  }, [cameraType, brewParams.prompt, toast, transitionToPhase]);
 
   // Auto-start camera on desktop (non-mobile devices)
   useEffect(() => {
@@ -587,12 +600,18 @@ export default function Capture() {
   // Render content based on current state
   let content;
 
+  // Determine base phase and transition state
+  const basePhase = uiPhase.replace(/-fade-out$/, '') as "0-camera-selection" | "2-design-brew" | "4-stream";
+  const isFadeOut = uiPhase.includes('-fade-out');
+
   // Camera selection screen - shown on mobile devices
-  if (uiPhase === "0-camera-selection") {
+  if (basePhase === "0-camera-selection") {
     const showMultipleCameras = hasMultipleCameras();
 
     content = (
-      <div className="fixed inset-0 flex items-center justify-center p-6 bg-neutral-950 text-neutral-200">
+      <div className={`fixed inset-0 flex items-center justify-center p-6 bg-neutral-950 text-neutral-200 transition-opacity duration-300 ${
+        isFadeOut ? 'opacity-0' : 'opacity-100'
+      }`}>
         <div className="max-w-md w-full text-center space-y-6">
           <div>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent mb-2">
@@ -664,9 +683,11 @@ export default function Capture() {
     );
   }
   // Parameter setup screen - shown after camera selection but before stream starts
-  else if (uiPhase === "1-design-brew") {
+  else if (basePhase === "2-design-brew") {
     content = (
-      <div className="fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200">
+      <div className={`fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200 transition-opacity duration-300 ${
+        isFadeOut ? 'opacity-0' : 'opacity-100'
+      }`}>
         {/* Header Section */}
         <div className="flex-shrink-0 px-6 pt-6 pb-4 text-center">
           <h1 className="text-2xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent">
@@ -707,7 +728,7 @@ export default function Capture() {
         </div>
       </div>
     );
-  } else if (uiPhase === "2-stream") {
+  } else if (basePhase === "4-stream") {
     // Main streaming view is now handled by the secret container below
     content = null;
   }
@@ -718,8 +739,10 @@ export default function Capture() {
       {/* Secret streaming container - hidden during setup, visible after */}
       <div
         className={
-          uiPhase === "2-stream"
-            ? "fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200"
+          basePhase === "4-stream"
+            ? `fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200 transition-opacity duration-300 ${
+                isFadeOut ? 'opacity-0' : 'opacity-100'
+              }`
             : "fixed top-0 left-0 w-1 h-1 opacity-0 pointer-events-none overflow-hidden"
         }
       >
