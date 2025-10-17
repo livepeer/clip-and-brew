@@ -18,7 +18,6 @@ import {
   StudioRecorder,
   type StudioRecorderHandle,
 } from "@/components/StudioRecorder";
-import { saveClipToDatabase } from "@/lib/recording";
 import {
   DiffusionParams,
   type BrewParams,
@@ -38,6 +37,40 @@ const hasMultipleCameras = (): boolean => {
   // Assume device has multiple cameras if it's touch-enabled or mobile UA
   return hasTouch || mobileUserAgent;
 };
+
+/**
+ * Save clip metadata to database
+ */
+async function saveClipToDatabase(params: {
+  assetId: string;
+  playbackId: string;
+  downloadUrl?: string;
+  rawUploadedFileUrl?: string;
+  durationMs: number;
+  sessionId: string;
+  prompt?: string;
+  textureId?: string | null;
+  textureWeight?: number | null;
+  tIndexList?: number[] | null;
+}): Promise<{ id: string; [key: string]: unknown }> {
+  const { data: clip, error } = await supabase.functions.invoke('save-clip', {
+    body: {
+      assetId: params.assetId,
+      playbackId: params.playbackId,
+      downloadUrl: params.downloadUrl,
+      raw_uploaded_file_url: params.rawUploadedFileUrl,
+      durationMs: params.durationMs,
+      session_id: params.sessionId,
+      prompt: params.prompt,
+      texture_id: params.textureId,
+      texture_weight: params.textureWeight,
+      t_index_list: params.tIndexList,
+    },
+  });
+
+  if (error) throw error;
+  return clip;
+}
 
 export default function Capture() {
   // Controls the main UI flow through the capture process:
