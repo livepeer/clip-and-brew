@@ -596,14 +596,15 @@ navigate('/path');
 
 **Why It Happened**: Safari/iOS doesn't support `HTMLVideoElement.captureStream()` for WebRTC video streams (security/implementation limitation)
 
-**The Fix**: Canvas-based fallback in VideoRecorder class:
-1. Detects when direct `captureStream()` is unavailable
-2. Creates offscreen canvas matching video dimensions
-3. Copies video frames to canvas at 30fps using `requestAnimationFrame`
-4. Captures from canvas using `canvas.captureStream(30)` (widely supported)
-5. Extracts and includes audio tracks from video's MediaStream
+**The Solution**: Canvas-based recording for ALL browsers (not just fallback):
+1. Always creates offscreen canvas matching video dimensions (512×512)
+2. Copies video frames to canvas at 30fps using `requestAnimationFrame`
+3. Captures from canvas using `canvas.captureStream(30)` (supported everywhere)
+4. Extracts and includes audio tracks from video's MediaStream
 
-**Current Behavior**: Recording works seamlessly on all modern browsers including Safari/iPhone. Users see no difference in UX.
+**Why canvas for all browsers?** Provides consistent behavior, simpler code, works reliably everywhere including Safari/iOS. No performance penalty at 512×512 resolution.
+
+**Current Behavior**: Recording works seamlessly on all modern browsers with consistent implementation path.
 
 **Details**: See `src/components/StudioRecorder.tsx` VideoRecorder class
 
@@ -883,10 +884,10 @@ Avoid:
 
 **Recent Changes**:
 - **Safari/iPhone recording compatibility (2025-10-17)**: Fixed "Video capture not supported" error
-  - Added canvas-based fallback in VideoRecorder for WebRTC streams on Safari/iOS
-  - Automatically detects when direct captureStream() unavailable and uses canvas workaround
-  - Copies video frames at 30fps, extracts audio tracks, provides seamless recording experience
-  - Recording now works on all modern browsers including iPhone/Safari
+  - Switched to canvas-based recording for ALL browsers (consistent implementation)
+  - Always copies video frames at 30fps to canvas, captures canvas stream
+  - Works reliably across Chrome, Firefox, Safari (desktop & iOS), iPhone
+  - Simpler code with no browser-specific fallback logic
 - **StudioRecorder component**: Extracted recording/upload logic into reusable component
   - Wraps any video/canvas element and handles recording → Livepeer upload → asset processing
   - Exposes `startRecording()`/`stopRecording()` via ref handle
@@ -903,7 +904,7 @@ Avoid:
 - Added Quick Navigation Guide for agents
 
 **Historical Fixes** (see "Known Issues & Workarounds" for details):
-- Safari/iPhone recording compatibility → Canvas-based captureStream fallback
+- Safari/iPhone recording compatibility → Canvas-based recording (consistent across all browsers)
 - Stream initialization race condition → Edge function retry logic
 - Camera mirroring → Canvas-based source transformation
 - ICE gathering delay → Multiple STUN servers + timeout
