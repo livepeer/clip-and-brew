@@ -44,9 +44,10 @@ serve(async (req) => {
     const uploadUrl = data?.url;
     const tusEndpoint = data?.tusEndpoint;
     const assetId = data?.asset?.id;
+    const playbackId = data?.asset?.playbackId;
 
-    // Try to fetch the corresponding task and extract the raw download URL
-    let rawDownloadUrl: string | undefined = undefined;
+    // Try to fetch the corresponding task and extract the raw upload URL
+    let rawUploadedFileUrl: string | undefined = undefined;
     try {
       if (assetId) {
         const filtersParam = encodeURIComponent(JSON.stringify([{ id: 'outputAssetId', value: assetId }]));
@@ -60,22 +61,23 @@ serve(async (req) => {
         if (tasksResponse.ok) {
           const tasks = await tasksResponse.json();
           const task = Array.isArray(tasks) ? tasks[0] : undefined;
-          rawDownloadUrl = task?.params?.upload?.url;
-          console.log('Derived rawDownloadUrl from task:', rawDownloadUrl);
+          rawUploadedFileUrl = task?.params?.upload?.url;
+          console.log('Derived rawUploadedFileUrl from task:', rawUploadedFileUrl);
         } else {
           const errorText = await tasksResponse.text();
           console.warn('Failed to fetch tasks:', tasksResponse.status, errorText);
         }
       }
     } catch (err) {
-      console.warn('Error while fetching tasks for rawDownloadUrl:', err);
+      console.warn('Error while fetching tasks for rawUploadedFileUrl:', err);
     }
 
     return new Response(JSON.stringify({
       uploadUrl,
       tusEndpoint,
       assetId,
-      rawDownloadUrl
+      playbackId,
+      rawUploadedFileUrl
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
