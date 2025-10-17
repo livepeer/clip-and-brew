@@ -662,7 +662,7 @@ export default function Capture() {
   // Parameter setup screen - shown after camera selection but before stream starts
   else if (!setupComplete) {
     content = (
-      <div className="fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200 animate-fade-in">
+      <div className="fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200">
         {/* Header Section */}
         <div className="flex-shrink-0 px-6 pt-6 pb-4 text-center">
           <h1 className="text-2xl font-bold bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent">
@@ -715,7 +715,7 @@ export default function Capture() {
       <div
         className={
           setupComplete
-            ? "fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200 animate-fade-in"
+            ? "fixed inset-0 flex flex-col bg-neutral-950 text-neutral-200"
             : "fixed top-0 left-0 w-1 h-1 opacity-0 pointer-events-none overflow-hidden"
         }
       >
