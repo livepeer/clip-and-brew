@@ -25,7 +25,7 @@ export interface StudioRecorderProps {
   onRecordingStart?: () => void;
   onRecordingStop?: () => void;
   onProgress?: (progress: RecordingProgress) => void;
-  onUploadDone?: (result: UploadDoneResult) => void;
+  onUploadDone?: (result: StudioRecordingResult) => void;
   onComplete?: (result: StudioRecordingResult) => void;
   onError?: (error: Error) => void;
 }
@@ -46,13 +46,6 @@ export interface RecordingProgress {
   phase: 'recording' | 'uploading' | 'processing' | 'complete';
   step?: string;
   progress?: number;
-}
-
-// Result when upload is complete and processing starts
-export interface UploadDoneResult {
-  assetId: string;
-  playbackId: string;
-  rawUploadedFileUrl?: string;
 }
 
 
@@ -217,7 +210,7 @@ async function uploadToLivepeer(
   blob: RecordedBlob,
   filename: string,
   onProgress?: (progress: RecordingProgress) => void,
-  onUploadDone?: (result: UploadDoneResult) => void
+  onUploadDone?: (result: StudioRecordingResult) => void
 ): Promise<StudioRecordingResult> {
   // Step 1: Request upload URL from server
   console.log('Requesting upload URL...');
@@ -323,53 +316,56 @@ async function uploadToLivepeer(
   // Step 3: Poll for asset readiness with better error handling
   let attempts = 0;
   const maxAttempts = 300; // 5 minutes max (polling every 1s)
-  let assetData: {
+  let uploadDoneCalled = false;
+
+  let assetData = {} as {
     status?: string;
     playbackId?: string;
     downloadUrl?: string;
     error?: { message?: string };
     progress?: number;
-  } | null = null;
-  let uploadDoneCalled = false;
-
+  };
   while (attempts < maxAttempts) {
     const { data, error } = await supabase.functions.invoke('studio-asset-status', {
       body: { assetId: uploadData.assetId },
     });
+    assetData = data || {};
 
     if (error) {
       console.error('Error checking asset status:', error);
       throw new Error(`Failed to check asset status: ${error.message || 'Unknown error'}`);
     }
 
-    assetData = data as typeof assetData;
-    const status = assetData?.status;
-    const progress = assetData?.progress || (attempts / maxAttempts);
-    console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, status, assetData);
+    const progress = assetData.progress || (attempts / maxAttempts);
+    console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, assetData.status, assetData);
 
     // Notify that upload is done and processing has started (first time we see 'processing' status)
-    if (!uploadDoneCalled && status === 'processing') {
+    if (!uploadDoneCalled && assetData.status === 'processing') {
       uploadDoneCalled = true;
       onUploadDone?.({
         assetId: uploadData.assetId,
         playbackId: uploadData.playbackId,
-        rawUploadedFileUrl: uploadData.rawUploadedFileUrl
+        rawUploadedFileUrl: uploadData.rawUploadedFileUrl,
+        durationMs: blob.durationMs,
+        mimeType: blob.mimeType,
+        downloadUrl: assetData.downloadUrl,
+        blob: blob.data,
       });
     }
 
     // Report progress to caller
     onProgress?.({
       phase: 'processing',
-      step: `Processing: ${status || 'waiting'}...`,
+      step: `Processing: ${assetData.status || 'waiting'}...`,
       progress: Math.min(progress, 99), // Cap at 99% until ready
     });
 
-    if (status === 'ready') {
+    if (assetData.status === 'ready') {
       console.log('Asset is ready!', assetData);
       break;
     }
 
-    if (status === 'failed' || status === 'error') {
+    if (assetData.status === 'failed' || assetData.status === 'deleted') {
       const errorMsg = assetData?.error?.message || 'Unknown processing error';
       console.error('Asset processing failed:', errorMsg, assetData);
       throw new Error(`Video processing failed: ${errorMsg}. The video file may be invalid or unsupported.`);
@@ -379,12 +375,12 @@ async function uploadToLivepeer(
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
-  if (assetData?.status !== 'ready') {
+  if (assetData.status !== 'ready') {
     console.error('Asset processing timeout. Last status:', assetData);
     throw new Error('Video processing timed out after 5 minutes. Please try recording again.');
   }
 
-  if (!assetData?.playbackId) {
+  if (!assetData.playbackId) {
     console.error('Asset ready but no playbackId:', assetData);
     throw new Error('Video processed but playback ID is missing');
   }
