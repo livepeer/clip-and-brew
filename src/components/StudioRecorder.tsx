@@ -24,44 +24,31 @@ export interface StudioRecorderProps {
 
   onRecordingStart?: () => void;
   onRecordingStop?: () => void;
-  onProgress?: (progress: UploadProgress) => void;
+  onProgress?: (progress: RecordingProgress) => void;
   onUploadDone?: (result: UploadDoneResult) => void;
-  onComplete?: (result: RecordingResult) => void;
+  onComplete?: (result: StudioRecordingResult) => void;
   onError?: (error: Error) => void;
 }
 
-export interface RecordingResult {
+// Result returned to parent when whole recording process is complete
+export interface StudioRecordingResult {
   assetId: string;
   playbackId: string;
-  downloadUrl?: string;
-  rawUploadedFileUrl?: string;
-  durationMs: number;
-}
-
-export interface RecordingResult {
-  blob: Blob;
   durationMs: number;
   mimeType: string;
+  downloadUrl?: string;
+  rawUploadedFileUrl?: string;
+  blob?: Blob;
 }
 
-export interface UploadProgress {
+// Progress updates during upload/processing
+export interface RecordingProgress {
   phase: 'recording' | 'uploading' | 'processing' | 'complete';
   step?: string;
   progress?: number;
 }
-export interface UploadResult {
-  assetId: string;
-  playbackId: string;
-  downloadUrl?: string;
-  rawUploadedFileUrl?: string;
-}
 
-export interface UploadProgress {
-  phase: string;
-  step?: string;
-  progress?: number;
-}
-
+// Result when upload is complete and processing starts
 export interface UploadDoneResult {
   assetId: string;
   playbackId: string;
@@ -72,6 +59,13 @@ export interface UploadDoneResult {
 // Extend HTMLVideoElement to include captureStream method
 interface HTMLVideoElementWithCapture extends HTMLVideoElement {
   captureStream?: () => MediaStream;
+}
+
+// Internal type for raw recording result from VideoRecorder
+interface RecordedBlob {
+  data: Blob;
+  durationMs: number;
+  mimeType: string;
 }
 
 /**
@@ -146,7 +140,7 @@ class VideoRecorder {
   /**
    * Stop recording and return the recorded blob
    */
-  async stop(): Promise<RecordingResult> {
+  async stop(): Promise<RecordedBlob> {
     if (!this.recorder || !this.startTime) {
       throw new Error('Recording not started');
     }
@@ -205,7 +199,7 @@ class VideoRecorder {
       // Continue with original blob if fixing fails
     }
 
-    return { blob, durationMs, mimeType: this.mimeType };
+    return { data: blob, durationMs, mimeType: this.mimeType };
   }
 
   /**
@@ -220,11 +214,11 @@ class VideoRecorder {
  * Upload a recorded blob to Livepeer Studio and wait for asset to be ready
  */
 async function uploadToLivepeer(
-  blob: Blob,
+  blob: RecordedBlob,
   filename: string,
-  onProgress?: (progress: UploadProgress) => void,
+  onProgress?: (progress: RecordingProgress) => void,
   onUploadDone?: (result: UploadDoneResult) => void
-): Promise<UploadResult> {
+): Promise<StudioRecordingResult> {
   // Step 1: Request upload URL from server
   console.log('Requesting upload URL...');
   const { data: uploadData, error: uploadError } = await supabase.functions.invoke(
@@ -245,14 +239,14 @@ async function uploadToLivepeer(
   console.log('Got upload data for asset:', uploadData.assetId);
 
   // Step 2: Upload using TUS resumable upload (preferred) or PUT fallback
-  const file = new File([blob], filename, { type: blob.type });
+  const file = new File([blob.data], filename, { type: blob.data.type });
 
   let uploaded = false;
   if (uploadData.tusEndpoint) {
     // Use TUS resumable upload
     console.log('Starting TUS upload...', {
-      size: blob.size,
-      type: blob.type,
+      size: blob.data.size,
+      type: blob.data.type,
       filename,
       tusEndpoint: uploadData.tusEndpoint
     });
@@ -267,7 +261,7 @@ async function uploadToLivepeer(
           retryDelays: [0, 1000, 2000, 5000, 10000, 20000],
           metadata: {
             filename: filename,
-            filetype: blob.type || 'video/webm',
+            filetype: blob.data.type || 'video/webm',
           },
           onProgress: (bytesUploaded, bytesTotal) => {
             const progress = bytesUploaded / bytesTotal;
@@ -297,8 +291,8 @@ async function uploadToLivepeer(
   if (!uploaded && uploadData?.uploadUrl) {
     // Fallback to PUT upload
     console.log('TUS not available, using PUT upload fallback...', {
-      size: blob.size,
-      type: blob.type,
+      size: blob.data.size,
+      type: blob.data.type,
       filename,
       uploadUrl: uploadData.uploadUrl
     });
@@ -308,9 +302,9 @@ async function uploadToLivepeer(
     const putResponse = await fetch(uploadData.uploadUrl, {
       method: 'PUT',
       headers: {
-        'Content-Type': blob.type || 'video/webm',
+        'Content-Type': blob.data.type || 'video/webm',
       },
-      body: blob,
+      body: blob.data,
     });
 
     if (!putResponse.ok) {
@@ -400,8 +394,11 @@ async function uploadToLivepeer(
   return {
     assetId: uploadData.assetId,
     playbackId: assetData.playbackId!,
+    durationMs: blob.durationMs,
+    mimeType: blob.mimeType,
     downloadUrl: assetData.downloadUrl,
     rawUploadedFileUrl: uploadData.rawUploadedFileUrl,
+    blob: blob.data,
   };
 }
 
@@ -484,15 +481,16 @@ export const StudioRecorder = forwardRef<StudioRecorderHandle, StudioRecorderPro
       try {
         // Stop the recorder and get the blob
         console.log('StudioRecorder: Stopping recorder...');
-        const { blob, durationMs } = await recorderRef.current.stop();
+        const blob = await recorderRef.current.stop();
         recorderRef.current = null;
         recordStartTimeRef.current = null;
 
         onRecordingStop?.();
 
         console.log('StudioRecorder: Recording stopped, uploading to Livepeer...', {
-          durationMs,
-          size: blob.size,
+          ...blob,
+          data: undefined,
+          size: blob.data.size,
         });
 
         // Generate filename with timestamp
@@ -502,12 +500,12 @@ export const StudioRecorder = forwardRef<StudioRecorderHandle, StudioRecorderPro
         // Upload to Livepeer Studio with progress tracking
         onProgress?.({ phase: 'uploading', step: 'Uploading...' });
 
-        const { assetId, playbackId, downloadUrl, rawUploadedFileUrl } = await uploadToLivepeer(
+        const result = await uploadToLivepeer(
           blob,
           filename,
           (progress) => {
             // Forward progress updates to parent
-            onProgress?.(progress as UploadProgress);
+            onProgress?.(progress as RecordingProgress);
           },
           (uploadDoneResult) => {
             // Forward upload done notification to parent
@@ -515,17 +513,11 @@ export const StudioRecorder = forwardRef<StudioRecorderHandle, StudioRecorderPro
           }
         );
 
-        console.log('StudioRecorder: Upload complete', { assetId, playbackId, downloadUrl, rawUploadedFileUrl });
+        console.log('StudioRecorder: Upload complete', result);
 
         // Notify completion with asset info
         onProgress?.({ phase: 'complete', step: 'Complete!', progress: 100 });
-        onComplete?.({
-          assetId,
-          playbackId,
-          downloadUrl,
-          rawUploadedFileUrl,
-          durationMs,
-        });
+        onComplete?.(result);
       } catch (error) {
         console.error('StudioRecorder: Failed to stop/upload recording', error);
         onError?.(error instanceof Error ? error : new Error(String(error)));
