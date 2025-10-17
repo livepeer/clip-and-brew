@@ -7,7 +7,7 @@
  */
 
 import React, { forwardRef, useImperativeHandle, useRef, useCallback } from 'react';
-import { VideoRecorder, uploadToLivepeer } from '@/lib/recording';
+import { VideoRecorder, uploadToLivepeer, type UploadDoneResult } from '@/lib/recording';
 
 export interface StudioRecorderHandle {
   startRecording: () => Promise<void>;
@@ -22,6 +22,7 @@ export interface StudioRecorderProps {
   onRecordingStart?: () => void;
   onRecordingStop?: () => void;
   onProgress?: (progress: UploadProgress) => void;
+  onUploadDone?: (result: UploadDoneResult) => void;
   onComplete?: (result: RecordingResult) => void;
   onError?: (error: Error) => void;
 }
@@ -38,13 +39,10 @@ export interface UploadProgress {
   phase: 'recording' | 'uploading' | 'processing' | 'complete';
   step?: string;
   progress?: number;
-  rawUploadedFileUrl?: string;
-  assetId?: string;
-  playbackId?: string;
 }
 
 export const StudioRecorder = forwardRef<StudioRecorderHandle, StudioRecorderProps>(
-  ({ children, className, style, onRecordingStart, onRecordingStop, onProgress, onComplete, onError }, ref) => {
+  ({ children, className, style, onRecordingStart, onRecordingStop, onProgress, onUploadDone, onComplete, onError }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const recorderRef = useRef<VideoRecorder | null>(null);
     const recordStartTimeRef = useRef<number | null>(null);
@@ -146,6 +144,10 @@ export const StudioRecorder = forwardRef<StudioRecorderHandle, StudioRecorderPro
           (progress) => {
             // Forward progress updates to parent
             onProgress?.(progress as UploadProgress);
+          },
+          (uploadDoneResult) => {
+            // Forward upload done notification to parent
+            onUploadDone?.(uploadDoneResult);
           }
         );
 
@@ -166,7 +168,7 @@ export const StudioRecorder = forwardRef<StudioRecorderHandle, StudioRecorderPro
       } finally {
         isProcessingRef.current = false;
       }
-    }, [onRecordingStop, onProgress, onComplete, onError]);
+    }, [onRecordingStop, onProgress, onUploadDone, onComplete, onError]);
 
     // Cleanup on unmount
     React.useEffect(() => {

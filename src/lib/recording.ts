@@ -28,9 +28,12 @@ interface UploadProgress {
   phase: string;
   step?: string;
   progress?: number;
+}
+
+export interface UploadDoneResult {
+  assetId: string;
+  playbackId: string;
   rawUploadedFileUrl?: string;
-  assetId?: string;
-  playbackId?: string;
 }
 
 /**
@@ -181,7 +184,8 @@ export class VideoRecorder {
 export async function uploadToLivepeer(
   blob: Blob,
   filename: string,
-  onProgress?: (progress: UploadProgress) => void
+  onProgress?: (progress: UploadProgress) => void,
+  onUploadDone?: (result: UploadDoneResult) => void
 ): Promise<UploadResult> {
   // Step 1: Request upload URL from server
   console.log('Requesting upload URL...');
@@ -237,13 +241,6 @@ export async function uploadToLivepeer(
           },
           onSuccess: () => {
             console.log('TUS upload completed successfully');
-            onProgress?.({
-              phase: 'processing',
-              step: 'Processing video...',
-              rawUploadedFileUrl: uploadData.rawUploadedFileUrl,
-              assetId: uploadData.assetId,
-              playbackId: uploadData.playbackId
-            });
             resolve();
           },
           onError: (error) => {
@@ -285,14 +282,7 @@ export async function uploadToLivepeer(
     }
     uploaded = true;
 
-    console.log('PUT upload successful, waiting for asset to be ready...');
-    onProgress?.({
-      phase: 'processing',
-      step: 'Processing video...',
-      rawUploadedFileUrl: uploadData.rawUploadedFileUrl,
-      assetId: uploadData.assetId,
-      playbackId: uploadData.playbackId
-    });
+    console.log('PUT upload successful');
   }
   if (!uploaded) {
     throw new Error('Upload failed');
@@ -308,6 +298,7 @@ export async function uploadToLivepeer(
     error?: { message?: string };
     progress?: number;
   } | null = null;
+  let uploadDoneCalled = false;
 
   while (attempts < maxAttempts) {
     const { data, error } = await supabase.functions.invoke('studio-asset-status', {
@@ -323,6 +314,16 @@ export async function uploadToLivepeer(
     const status = assetData?.status;
     const progress = assetData?.progress || (attempts / maxAttempts);
     console.log(`Asset status (attempt ${attempts + 1}/${maxAttempts}):`, status, assetData);
+
+    // Notify that upload is done and processing has started (first time we see 'processing' status)
+    if (!uploadDoneCalled && status === 'processing') {
+      uploadDoneCalled = true;
+      onUploadDone?.({
+        assetId: uploadData.assetId,
+        playbackId: uploadData.playbackId,
+        rawUploadedFileUrl: uploadData.rawUploadedFileUrl
+      });
+    }
 
     // Report progress to caller
     onProgress?.({

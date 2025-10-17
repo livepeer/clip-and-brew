@@ -278,86 +278,7 @@ export default function Capture() {
 
   // StudioRecorder callback: Handle upload progress
   const handleRecordingProgress = useCallback(
-    async (progress: {
-      phase: string;
-      step?: string;
-      progress?: number;
-      rawUploadedFileUrl?: string;
-      assetId?: string;
-      playbackId?: string;
-    }) => {
-      // Check if we're in processing phase and have the raw uploaded file URL
-      if (progress.phase === "processing" && progress.rawUploadedFileUrl && progress.assetId && progress.playbackId) {
-        // Don't save twice
-        if (clipSavedRef.current) {
-          return;
-        }
-
-        console.log("Upload complete, saving clip immediately with raw URL:", progress.rawUploadedFileUrl);
-        setUploadProgress("Saving clip...");
-
-        try {
-          // Get session ID
-          const { data: sessionData, error: sessionError } = await supabase
-            .from("sessions")
-            .select("id")
-            .eq("stream_id", streamId)
-            .single();
-
-          if (sessionError) {
-            console.error("Session query error:", sessionError, { streamId });
-            throw new Error(`Session not found: ${sessionError.message}`);
-          }
-
-          if (!sessionData) {
-            throw new Error("Session not found");
-          }
-
-          // Get the recording duration from our ref
-          const recordingDuration = recordStartTimeRef.current
-            ? Date.now() - recordStartTimeRef.current
-            : 5000; // fallback to 5s if we can't get the actual duration
-
-          // Clamp duration to valid range: 3-10s
-          const clampedDuration = Math.min(Math.max(recordingDuration, 3000), 10000);
-
-          // Save clip with the available data (asset won't be ready yet but we have the raw URL)
-          const clip = await saveClipToDatabase({
-            assetId: progress.assetId,
-            playbackId: progress.playbackId,
-            downloadUrl: undefined,
-            rawUploadedFileUrl: progress.rawUploadedFileUrl,
-            durationMs: clampedDuration,
-            sessionId: sessionData.id,
-            prompt: brewParams.prompt,
-            textureId: brewParams.texture,
-            textureWeight: brewParams.texture ? brewParams.textureWeight : null,
-            tIndexList: canvasParams?.t_index_list || [],
-          });
-
-          // Mark as saved to prevent double-save in complete callback
-          clipSavedRef.current = true;
-
-          toast({
-            title: "Clip created!",
-            description: "Redirecting to your clip...",
-          });
-
-          // Navigate immediately to clip page
-          navigate(`/clip/${clip.id}`);
-        } catch (error: unknown) {
-          console.error("Error saving clip early:", error);
-          const message = error instanceof Error ? error.message : String(error);
-          toast({
-            title: "Error",
-            description: message,
-            variant: "destructive",
-          });
-        }
-        return;
-      }
-
-      // Normal progress handling
+    (progress: { phase: string; step?: string; progress?: number }) => {
       if (progress.phase === "uploading" && progress.progress !== undefined) {
         // Show upload progress with percentage (TUS only)
         const uploadPercent = Math.round(progress.progress * 100);
@@ -378,7 +299,87 @@ export default function Capture() {
         setUploadProgress(progress.step || progress.phase);
       }
     },
-    [setUploadProgress, setLastDisplayedProgress, streamId, brewParams, canvasParams, navigate, toast]
+    [setUploadProgress, setLastDisplayedProgress]
+  );
+
+  // StudioRecorder callback: Handle upload completion (when file is uploaded and processing starts)
+  const handleUploadDone = useCallback(
+    async (result: { assetId: string; playbackId: string; rawUploadedFileUrl?: string }) => {
+      // Skip if we already saved the clip
+      if (clipSavedRef.current) {
+        console.log("Clip already saved, skipping upload done handler");
+        return;
+      }
+
+      // Only save early if we have rawUploadedFileUrl
+      if (!result.rawUploadedFileUrl) {
+        console.log("No rawUploadedFileUrl, will wait for full completion");
+        return;
+      }
+
+      console.log("Upload complete, saving clip immediately with raw URL:", result.rawUploadedFileUrl);
+      setUploadProgress("Saving clip...");
+
+      try {
+        // Get session ID
+        const { data: sessionData, error: sessionError } = await supabase
+          .from("sessions")
+          .select("id")
+          .eq("stream_id", streamId)
+          .single();
+
+        if (sessionError) {
+          console.error("Session query error:", sessionError, { streamId });
+          throw new Error(`Session not found: ${sessionError.message}`);
+        }
+
+        if (!sessionData) {
+          throw new Error("Session not found");
+        }
+
+        // Get the recording duration from our ref
+        const recordingDuration = recordStartTimeRef.current
+          ? Date.now() - recordStartTimeRef.current
+          : 5000; // fallback to 5s if we can't get the actual duration
+
+        // Clamp duration to valid range: 3-10s
+        const clampedDuration = Math.min(Math.max(recordingDuration, 3000), 10000);
+
+        // Save clip with the available data (asset won't be ready yet but we have the raw URL)
+        const clip = await saveClipToDatabase({
+          assetId: result.assetId,
+          playbackId: result.playbackId,
+          downloadUrl: undefined,
+          rawUploadedFileUrl: result.rawUploadedFileUrl,
+          durationMs: clampedDuration,
+          sessionId: sessionData.id,
+          prompt: brewParams.prompt,
+          textureId: brewParams.texture,
+          textureWeight: brewParams.texture ? brewParams.textureWeight : null,
+          tIndexList: canvasParams?.t_index_list || [],
+        });
+
+        // Mark as saved to prevent double-save in complete callback
+        clipSavedRef.current = true;
+
+        toast({
+          title: "Clip created!",
+          description: "Redirecting to your clip...",
+        });
+
+        // Navigate immediately to clip page
+        navigate(`/clip/${clip.id}`);
+      } catch (error: unknown) {
+        console.error("Error saving clip:", error);
+        const message = error instanceof Error ? error.message : String(error);
+        toast({
+          title: "Error",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+    [streamId, brewParams, canvasParams, navigate, toast]
   );
 
   // StudioRecorder callback: Handle recording completion
@@ -849,6 +850,7 @@ export default function Capture() {
             <StudioRecorder
               ref={studioRecorderRef}
               onProgress={handleRecordingProgress}
+              onUploadDone={handleUploadDone}
               onComplete={handleRecordingComplete}
               onError={handleRecordingError}
             >
