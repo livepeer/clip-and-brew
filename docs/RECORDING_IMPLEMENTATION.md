@@ -158,12 +158,21 @@ No client-side API keys needed. All Livepeer API calls are proxied through Edge 
 ## Browser Compatibility
 
 ### Supported
-- ✅ Chrome/Edge (desktop & mobile)
-- ✅ Firefox (desktop & mobile)
-- ✅ Safari 14.1+ (desktop & iOS)
+- ✅ Chrome/Edge (desktop & mobile) - Direct `captureStream()` on video element
+- ✅ Firefox (desktop & mobile) - Direct `captureStream()` on video element
+- ✅ Safari 14.1+ (desktop & iOS) - Canvas fallback for WebRTC streams
+
+### Safari/iOS Compatibility
+**Canvas Fallback Implementation**: When direct `captureStream()` is not supported on the video element (common on Safari/iOS with WebRTC streams), the VideoRecorder automatically:
+1. Creates an offscreen canvas matching the video dimensions
+2. Copies video frames to canvas using `requestAnimationFrame` at 30fps
+3. Captures the canvas stream using `canvas.captureStream(30)`
+4. Attempts to extract and include audio tracks from the video's MediaStream
+
+This ensures recording works seamlessly across all modern browsers including Safari/iPhone.
 
 ### Known Limitations
-- ❌ Older iOS versions (<14.1): `captureStream()` not supported
+- ❌ Older iOS versions (<14.1): `captureStream()` not supported even on canvas
 - ⚠️ Cross-origin iframes: Cannot capture, must use Player SDK
 
 ## Security

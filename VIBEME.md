@@ -591,6 +591,22 @@ navigate('/path');
 
 > **Note**: This section preserves historical context about quirks and decisions. For current implementation details, see `docs/` folder.
 
+### Safari/iPhone Video Capture Not Supported (✅ RESOLVED)
+**The Problem**: "Video capture not supported on this browser" error on Safari/iPhone - `captureStream()` doesn't work on video elements playing WebRTC streams
+
+**Why It Happened**: Safari/iOS doesn't support `HTMLVideoElement.captureStream()` for WebRTC video streams (security/implementation limitation)
+
+**The Fix**: Canvas-based fallback in VideoRecorder class:
+1. Detects when direct `captureStream()` is unavailable
+2. Creates offscreen canvas matching video dimensions
+3. Copies video frames to canvas at 30fps using `requestAnimationFrame`
+4. Captures from canvas using `canvas.captureStream(30)` (widely supported)
+5. Extracts and includes audio tracks from video's MediaStream
+
+**Current Behavior**: Recording works seamlessly on all modern browsers including Safari/iPhone. Users see no difference in UX.
+
+**Details**: See `src/components/StudioRecorder.tsx` VideoRecorder class
+
 ### Stream Not Ready on Initialization (✅ RESOLVED)
 **The Problem**: Stream creation → immediate param update = "Stream not ready yet" error → black screen
 
@@ -863,9 +879,14 @@ Avoid:
 
 ---
 
-**Last Updated**: 2025-10-15
+**Last Updated**: 2025-10-17
 
 **Recent Changes**:
+- **Safari/iPhone recording compatibility (2025-10-17)**: Fixed "Video capture not supported" error
+  - Added canvas-based fallback in VideoRecorder for WebRTC streams on Safari/iOS
+  - Automatically detects when direct captureStream() unavailable and uses canvas workaround
+  - Copies video frames at 30fps, extracts audio tracks, provides seamless recording experience
+  - Recording now works on all modern browsers including iPhone/Safari
 - **StudioRecorder component**: Extracted recording/upload logic into reusable component
   - Wraps any video/canvas element and handles recording → Livepeer upload → asset processing
   - Exposes `startRecording()`/`stopRecording()` via ref handle
@@ -882,6 +903,7 @@ Avoid:
 - Added Quick Navigation Guide for agents
 
 **Historical Fixes** (see "Known Issues & Workarounds" for details):
+- Safari/iPhone recording compatibility → Canvas-based captureStream fallback
 - Stream initialization race condition → Edge function retry logic
 - Camera mirroring → Canvas-based source transformation
 - ICE gathering delay → Multiple STUN servers + timeout
