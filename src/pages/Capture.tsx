@@ -183,7 +183,20 @@ export default function Capture() {
         return;
       }
       
-      console.log("[Capture] Auth check passed, user ID:", session.user.id);
+      // Check if user exists in our users table
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select("id")
+        .eq("id", session.user.id)
+        .single();
+      
+      if (userError || !userData) {
+        console.log("[Capture] User not found in database, navigating to /login");
+        navigate("/login");
+        return;
+      }
+      
+      console.log("[Capture] Auth check passed, user exists in database:", userData.id);
     } catch (error) {
       console.error("Error checking authentication:", error);
       navigate("/login");
