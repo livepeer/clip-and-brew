@@ -162,6 +162,20 @@ export function Login() {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session?.user) {
         const wasAnonymous = (session.user as any)?.is_anonymous || false;
+        if (!wasAnonymous) {
+          const { error: upsertError } = await supabase
+            .from("users")
+            .upsert({ id: session.user.id, email: session.user.email }, { onConflict: "id" });
+          if (upsertError) {
+            console.error("Failed to save user data on auth change:", upsertError);
+            toast({
+              title: "Error",
+              description: "Logged in but couldn't save user data. Please try again.",
+              variant: "destructive"
+            });
+            return;
+          }
+        }
         toast({
           title: "Success!",
           description: wasAnonymous ? "Email added to your account" : "Logged in successfully",
