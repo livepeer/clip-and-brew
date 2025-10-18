@@ -73,23 +73,44 @@ serve(async (req) => {
       });
     }
 
-    // Get content length for proper headers
+    // Check file size - object stores always provide Content-Length
     const contentLength = videoResponse.headers.get('content-length');
-    let contentType = videoResponse.headers.get('content-type') || 'application/octet-stream';
-    // default to webm if content type is octet-stream
-    contentType = contentType === 'application/octet-stream' ? 'video/webm' : contentType;
+    const maxSize = 20 * 1024 * 1024; // 20MB
 
-    // Return the video as a streaming response
-    return new Response(videoResponse.body, {
+    if (!contentLength) {
+      console.error('No Content-Length header from object store');
+      return new Response(JSON.stringify({ error: 'Invalid response from storage' }), {
+        status: 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (parseInt(contentLength) > maxSize) {
+      console.error('Video file too large:', contentLength, 'bytes');
+      return new Response(JSON.stringify({ error: 'Video file too large (max 20MB)' }), {
+        status: 413,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const videoData = await videoResponse.arrayBuffer();
+
+    console.log('Video loaded successfully:', videoData.byteLength, 'bytes');
+
+    let contentType = videoResponse.headers.get('content-type');
+    if (!contentType || contentType === 'application/octet-stream') {
+      // default to webm if content type is octet-stream
+      contentType = 'video/webm';
+    }
+
+    return new Response(videoData, {
       status: 200,
       headers: {
         ...corsHeaders,
         'Content-Type': contentType,
-        ...(contentLength && { 'Content-Length': contentLength }),
+        'Content-Length': videoData.byteLength.toString(),
         'Content-Disposition': `inline; filename="${filename}"`,
         'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
-        'Accept-Ranges': 'bytes', // Support range requests for video seeking
-        'Transfer-Encoding': 'chunked', // Enable streaming
       },
     });
 

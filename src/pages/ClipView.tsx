@@ -637,7 +637,7 @@ export default function ClipView() {
                 // Raw video element for processing state
                 <div className="w-full h-full flex items-center justify-center bg-neutral-900 rounded-lg">
                   <video
-                    src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-raw-video/${clip.id}/brewdream-${clip.id.substring(0, 8)}.webm`}
+                    src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-raw-video/${clip.id}`}
                     controls
                     autoPlay
                     loop
