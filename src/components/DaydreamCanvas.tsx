@@ -8,7 +8,6 @@ import React, {
 import { supabase } from '@/integrations/supabase/client';
 import {
   createDaydreamStream,
-  startWhipPublish,
 } from '@/lib/daydream';
 import type { StreamDiffusionParams } from '@/lib/daydream';
 import prompts from '@/components/prompts';
@@ -52,6 +51,80 @@ const DEFAULT_STREAM_DIFFUSION_PARAMS = {
     insightface_model_name: 'buffalo_l' as const,
   },
 };
+
+/**
+ * Start WHIP publish from a MediaStream to Daydream
+ * Returns the RTCPeerConnection for later cleanup
+ */
+async function startWhipPublish(
+  whipUrl: string,
+  stream: MediaStream
+): Promise<{ pc: RTCPeerConnection; playbackUrl: string | null }> {
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+    ],
+    iceCandidatePoolSize: 3,
+  });
+
+  // Add all tracks from the stream
+  stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+  // Create offer
+  const offer = await pc.createOffer({
+    offerToReceiveAudio: false,
+    offerToReceiveVideo: false,
+  });
+  await pc.setLocalDescription(offer);
+
+  // Wait for ICE gathering to complete (non-trickle ICE) with timeout
+  const ICE_TIMEOUT = 2000; // 2 second timeout - aggressive for fast UX
+
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (pc.iceGatheringState === 'complete') {
+            pc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        pc.addEventListener('icegatheringstatechange', checkState);
+      }
+    }),
+    new Promise<void>((resolve) => setTimeout(resolve, ICE_TIMEOUT))
+  ]);
+
+  // Send offer to WHIP endpoint
+  const offerSdp = pc.localDescription!.sdp!;
+  const response = await fetch(whipUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/sdp',
+    },
+    body: offerSdp,
+  });
+
+  if (!response.ok) {
+    throw new Error(`WHIP publish failed: ${response.status} ${response.statusText}`);
+  }
+
+  // Capture low-latency WebRTC playback URL from response headers
+  const playbackUrl = response.headers.get('livepeer-playback-url') || null;
+
+  // Get answer SDP and set it
+  const answerSdp = await response.text();
+  await pc.setRemoteDescription({
+    type: 'answer',
+    sdp: answerSdp,
+  });
+
+  return { pc, playbackUrl };
+}
 
 export interface DaydreamCanvasProps {
   className?: string;
