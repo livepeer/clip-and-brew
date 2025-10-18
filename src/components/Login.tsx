@@ -162,40 +162,6 @@ export function Login() {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session?.user) {
         const wasAnonymous = (session.user as any)?.is_anonymous || false;
-        if (!wasAnonymous) {
-          const { error: upsertError } = await supabase
-            .from("users")
-            .upsert({ id: session.user.id, email: session.user.email, email_verified: true }, { onConflict: "id" });
-          if (upsertError) {
-            console.error("Failed to save user data on auth change:", upsertError);
-            toast({
-              title: "Error",
-              description: "Logged in but couldn't save user data. Please try again.",
-              variant: "destructive"
-            });
-            return;
-          }
-
-          // Wait a bit for database replication
-          await new Promise(resolve => setTimeout(resolve, 500));
-
-          // Verify the update was successful
-          const { data: verifyData, error: verifyError } = await supabase
-            .from("users")
-            .select("email_verified")
-            .eq("id", session.user.id)
-            .single();
-
-          if (verifyError || !verifyData?.email_verified) {
-            console.error("Email verification not confirmed in auth listener:", verifyError);
-            toast({
-              title: "Error",
-              description: "Email verification not confirmed. Please try logging in again.",
-              variant: "destructive"
-            });
-            return;
-          }
-        }
         toast({
           title: "Success!",
           description: wasAnonymous ? "Email added to your account" : "Logged in successfully",

@@ -176,69 +176,19 @@ export default function Capture() {
       } = await supabase.auth.getSession();
       
       console.log("[Capture] checkAuth called - session:", session);
-      console.log("[Capture] localStorage keys:", Object.keys(localStorage).filter(k => k.includes('supabase')));
       
-      if (!session) {
-        console.log("[Capture] No session found, navigating to /login");
+      if (!session || !session.user?.id) {
+        console.log("[Capture] No valid session/user, navigating to /login");
         navigate("/login");
         return;
       }
       
-      console.log("[Capture] Session exists, user ID:", session.user?.id, "is_anonymous:", (session.user as any)?.is_anonymous);
-
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("email, email_verified")
-        .eq("id", session.user.id)
-        .single();
-
-      if (userError) {
-        console.error("Error fetching user data:", userError);
-        toast({
-          title: "Authentication error",
-          description: "Please try logging in again",
-          variant: "destructive"
-        });
-        navigate("/login");
-        return;
-      }
-
-      // If user has an email but it's not verified, redirect to login
-      // BUT: Add a retry mechanism to handle database replication delays
-      if (userData.email && !userData.email_verified) {
-        console.log("Email not verified, checking again after delay...");
-        
-        // Wait a moment and check one more time (handles race condition from Login page)
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const { data: retryData, error: retryError } = await supabase
-          .from("users")
-          .select("email, email_verified")
-          .eq("id", session.user.id)
-          .single();
-
-        if (!retryError && retryData.email && !retryData.email_verified) {
-          // Still not verified after retry, redirect to login
-          console.log("Email still not verified after retry, redirecting to login");
-          navigate("/login");
-        } else if (!retryError && retryData.email_verified) {
-          // Verified on retry, continue
-          console.log("Email verified on retry, continuing to Capture");
-        } else if (retryError) {
-          console.error("Error on retry:", retryError);
-          navigate("/login");
-        }
-      }
+      console.log("[Capture] Auth check passed, user ID:", session.user.id);
     } catch (error) {
       console.error("Error checking authentication:", error);
-      toast({
-        title: "Authentication error",
-        description: "Please try logging in again",
-        variant: "destructive"
-      });
       navigate("/login");
     }
-  }, [navigate, toast]);
+  }, [navigate]);
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
