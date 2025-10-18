@@ -108,7 +108,10 @@ export function Login() {
       // Always send magic link for passwordless sign-in
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { shouldCreateUser: true },
+        options: { 
+          shouldCreateUser: true,
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
       });
       if (error) throw error;
 
@@ -132,7 +135,10 @@ export function Login() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { shouldCreateUser: true },
+        options: { 
+          shouldCreateUser: true,
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
       });
       if (error) throw error;
       
