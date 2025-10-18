@@ -175,10 +175,7 @@ export default function Capture() {
         data: { session },
       } = await supabase.auth.getSession();
       
-      console.log("[Capture] checkAuth called - session:", session);
-      
       if (!session || !session.user?.id) {
-        console.log("[Capture] No valid session/user, navigating to /login");
         navigate("/login");
         return;
       }
@@ -191,12 +188,9 @@ export default function Capture() {
         .single();
       
       if (userError || !userData) {
-        console.log("[Capture] User not found in database, navigating to /login");
         navigate("/login");
         return;
       }
-      
-      console.log("[Capture] Auth check passed, user exists in database:", userData.id);
     } catch (error) {
       console.error("Error checking authentication:", error);
       navigate("/login");
